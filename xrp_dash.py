@@ -227,7 +227,7 @@ def notify_periodic_summary():
                 'change_360m': change_360m,
                 'rating': signal_rating,
                 'change_24h': change_24h, # Lägg till 24h
-                'aktuellt_varde': current_price_eur, # 2025-11-18
+                'aktuellt_varde': aktuellt_varde, # 2025-11-18
             })
 
     if not summary_data:
@@ -1504,11 +1504,14 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
         )
     )
 
-    return fig
+return fig
 ### SLUT PÅ ÄNDRING ###
 
 # Lägg till denna rad för att exponera server-instansen för Gunicorn/Render
 server = app.server 
+# VIKTIGT: Sätt layouten globalt så att den finns när Gunicorn startar servern.
+app.layout = create_dashboard_layout()
+
 
 # --- INITIALISERING OCH KÖRNING ---
 if __name__ == '__main__':
@@ -1521,8 +1524,7 @@ if __name__ == '__main__':
     # 2. Skicka en testnotis via Telegram (körs en gång vid start)
     send_test_notification()
     
-    # 3. Sätt layout
-    app.layout = create_dashboard_layout()
+    # 3. Sätt layout (DENNA ÄR BORTTAGEN)
     
     # 4. STARTA DEN DEDIKERADE BAKGRUNDSTRÅDEN
     collector_thread = threading.Thread(target=background_data_collector)

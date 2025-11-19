@@ -1507,6 +1507,9 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
     return fig
 ### SLUT PÅ ÄNDRING ###
 
+# Lägg till denna rad för att exponera server-instansen för Gunicorn/Render
+server = app.server 
+
 # --- INITIALISERING OCH KÖRNING ---
 if __name__ == '__main__':
     

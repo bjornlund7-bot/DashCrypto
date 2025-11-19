@@ -78,7 +78,7 @@ DEFAULT_PAIR_KEY = 'XRP (Ripple)'
 ### SLUT PÅ ÄNDRING ###
 
 # Filnamn för permanent datalagring (XLSX)
-EXCEL_FILE_PATH = 'crypto_data_log.xlsx'
+EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
 
 # Inställningar för Dash
 UPDATE_INTERVAL_MS_WEB = 5000 # Snabbare intervall för ENBART webbuppdateringen (t.ex. 5 sek)
@@ -92,8 +92,8 @@ SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_3
 
 # =========================================================================
 # === KONFIGURATION FÖR TELEGRAM (Användarens sparade tokens och chat-ID) ===
-TELEGRAM_BOT_TOKEN = '8266312220:AAEpAFiIsf9UjaoKUOR8TCroLJIyIAR5jM4'
-TELEGRAM_CHAT_ID = '8342999996'
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 # =========================================================================
 
 # --- Strategikonstanter ---

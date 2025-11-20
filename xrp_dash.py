@@ -1609,25 +1609,27 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
 
 
 # =========================================================================
-# === HUVUDFUNKTION ===
+# === HUVUDFUNKTION OCH START AV APPLIKATIONEN ===
 # =========================================================================
+
 # DENNA RAD KRÄVS FÖR DEPLOYMENT MED GUNICORN
-    # 1. Starta Bakgrundslogik
-    # Tråden kommer att hantera initial datainsamling, regelbunden uppdatering och notiser.
+server = app.server
+
+if __name__ == '__main__':
+    # OBS: Allt nedanför MÅSTE vara indenterat (indraget)
+    
+    # 1. Starta Bakgrundslogik (Datainsamling/Notiser)
+    # daemon=True säkerställer att tråden avslutas när huvudprogrammet avslutas
     data_thread = threading.Thread(target=background_data_collector, daemon=True)
     data_thread.start()
 
     # 2. Skapa Dash-applikationens layout
     app.layout = create_dashboard_layout()
 
-    server = app.server
-    if __name__ == '__main__':
-
-
     # 3. Starta Dash-servern
     print("---------------------------------------------------------")
     print(f">>> Startar Dash webbserver (port {DASH_PORT})... <<<")
     print("---------------------------------------------------------")
 
-    # Använd debug=False och dev_tools_hot_reload=False för att säkerställa att bakgrundstråden bara startas en gång.
+    # Använd debug=False och dev_tools_hot_reload=False
     app.run_server(debug=False, port=DASH_PORT, host='0.0.0.0', dev_tools_hot_reload=False)

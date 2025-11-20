@@ -1612,8 +1612,6 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
 # === HUVUDFUNKTION ===
 # =========================================================================
 # DENNA RAD KRÄVS FÖR DEPLOYMENT MED GUNICORN
-server = app.server
-if __name__ == '__main__':
     # 1. Starta Bakgrundslogik
     # Tråden kommer att hantera initial datainsamling, regelbunden uppdatering och notiser.
     data_thread = threading.Thread(target=background_data_collector, daemon=True)
@@ -1621,6 +1619,10 @@ if __name__ == '__main__':
 
     # 2. Skapa Dash-applikationens layout
     app.layout = create_dashboard_layout()
+
+    server = app.server
+    if __name__ == '__main__':
+
 
     # 3. Starta Dash-servern
     print("---------------------------------------------------------")

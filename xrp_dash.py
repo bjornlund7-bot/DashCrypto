@@ -14,7 +14,12 @@ import itertools
 import threading
 from dash import exceptions
 import re
-import sys 
+import sys
+import requests
+import json
+import logging
+from redis import from_url, exceptions
+
 
 # --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"

@@ -2,7 +2,7 @@ import requests
 import time
 from datetime import datetime, timedelta
 import pandas as pd
-from dash import Dash, dcc, html, Input, Output, State
+from dash import Dash, dcc, html, Input, Output
 import plotly.graph_objects as go
 import collections
 from scipy.stats import linregress
@@ -12,30 +12,28 @@ import openpyxl
 from functools import lru_cache
 import itertools
 import threading
-from dash import exceptions
 import re
 import sys 
 import redis
 import json
 
 # =========================================================================
-# === KONFIGURATION & KONSTANTER ===
+# === 1. KONFIGURATION & KONSTANTER ===
 # =========================================================================
 
+# API URL:er
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# Excel-loggning
+# Filnamn och inställningar
 EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
-
-# Inställningar för Dash och Data
 UPDATE_INTERVAL_MS_WEB = 5000      # Webb uppdateras var 5:e sek
 UPDATE_INTERVAL_SECONDS_DATA = 60  # Data hämtas var 60:e sek
 MAX_DASH_POINTS = 1440             # 24h historik
 SUMMARY_TREND_POINTS_30M = 30      
 SUMMARY_TREND_POINTS_360M = 360    
-SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]
+SMA_WINDOWS = [30, 1440, 360]
 
 # Redis-nycklar
 REDIS_KPI_KEY = 'global_kpi_cache_json'
@@ -100,9 +98,8 @@ CRYPTO_PAIRS = {
 }
 DEFAULT_PAIR_KEY = 'XRP (Ripple)'
 
-# Strategi-trösklar
+# Tröskelvärden
 DIFF_THRESHOLD = 21
-REVERSION_THRESHOLD = 0.02 
 SPIKE_THRESHOLDS = {
     '+100%': 100.0, '+75%': 75.0, '+50%': 50.0, '+25%': 25.0, '+10%': 10.0,
     '-10%': -10.0, '-25%': -25.0, '-50%': -50.0,
@@ -111,7 +108,7 @@ SORTED_SPIKE_THRESHOLDS = sorted(SPIKE_THRESHOLDS.items(), key=lambda item: item
 TIMEFRAMES_FOR_SPIKES = ['30m', '100m', '360m', '24h']
 SUMMARY_SEND_TIMES = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
 
-# Globala spårningsvariabler (Används endast inom bakgrundstråden)
+# Globala variabler (Endast för bakgrundstråden)
 SENT_NOTIFICATIONS = {pair: 0 for pair in CRYPTO_PAIRS.values()}
 SENT_DIFF_NOTIFICATIONS = {}
 LAST_SUMMARY_SENT = {hour: None for hour in SUMMARY_SEND_TIMES}
@@ -120,10 +117,11 @@ SENT_SPIKE_NOTIFICATIONS = {
     for tf in TIMEFRAMES_FOR_SPIKES
 }
 
+# =========================================================================
+# === 2. REDIS INITIALISERING ===
+# =========================================================================
 
-# =========================================================================
-# === REDIS INITIALISERING ===
-# =========================================================================
+# Hämta URL från Renders miljövariabel
 REDIS_URL = os.environ.get('REDIS_URL')
 redis_client = None
 
@@ -135,10 +133,11 @@ if REDIS_URL:
     except Exception as e:
         print(f"❌ Redis-fel: {e}")
 else:
-    print("⚠️ Ingen REDIS_URL. Appen kommer inte fungera korrekt på Render.")
+    print("⚠️ Ingen REDIS_URL inställd i Environment Variables.")
+
 
 # =========================================================================
-# === HJÄLPFUNKTIONER ===
+# === 3. HJÄLPFUNKTIONER (Format, Data, Telegram) ===
 # =========================================================================
 
 def format_price_sek(value):
@@ -169,7 +168,7 @@ def get_eur_sek_rate():
     except:
         return 11.50
 
-# --- TELEGRAM ---
+# --- Telegram ---
 def send_telegram_message(message_text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -192,12 +191,7 @@ def notify_spike(tf, pair_key, pct, price, label):
     msg = f"{emoji} *{tf.upper()} VARNING ({label})*\n\n*{pair_key}*\nÄndring: *{format_percent(pct)}*\nPris: `{price_fmt} EUR`"
     send_telegram_message(msg)
 
-def notify_diff(c1, r1, c2, r2, diff):
-    msg = f"🚨 *ALARM DIFF ({DIFF_THRESHOLD})*\n\nDiff: `{diff}`\n1: *{c1}* ({r1:+})\n2: *{c2}* ({r2:+})"
-    send_telegram_message(msg)
-
 def notify_periodic_summary(kpi_cache):
-    # Denna funktion behöver nu ta emot kpi_cache som argument
     summary_data = []
     for pair_key, pair_ticker in CRYPTO_PAIRS.items():
         kpi = kpi_cache.get(pair_ticker, {})
@@ -211,18 +205,17 @@ def notify_periodic_summary(kpi_cache):
             summary_data.append({'c': name, '360': c360, 'r': rating, '24': c24, 'v': val})
 
     if not summary_data: return
-
     sorted_sum = sorted(summary_data, key=lambda x: x['360'], reverse=True)
     rows = []
     for i in sorted_sum:
-        rows.append(f"| `{i['c']}` | `{format_percent(i['360'])}` | `{format_percent(i['24'])}` | `{i['r']:+}` | `{i['v']}` |")
+        v_fmt = f"{i['v']:,.4f}".replace(",", " ") if i['v'] else "N/A"
+        rows.append(f"| `{i['c']}` | `{format_percent(i['360'])}` | `{format_percent(i['24'])}` | `{i['r']:+}` | `{v_fmt}` |")
     
     header = f"⏳ *PERIODISK SAMMANFATTNING*\n\n| Krypto | 360m % | 24h % | Betyg | Kurs |\n|---|---|---|---|---|\n"
     send_telegram_message(header + "\n".join(rows))
 
 
-# --- DATA & BERÄKNINGAR ---
-
+# --- Datahämtning & Beräkningar ---
 def get_crypto_data(pair_ticker):
     rate = get_eur_sek_rate()
     try:
@@ -256,13 +249,11 @@ def get_ohlc_price(pair_ticker, days, rate):
         
         ohlc = data['result'][list(data['result'].keys())[0]]
         target = (datetime.now() - timedelta(days=days)).timestamp()
-        
         best_eur = None
         for entry in reversed(ohlc):
             if entry[0] < target:
                 best_eur = float(entry[4])
                 break
-        
         if best_eur: return best_eur, best_eur * rate, None
         return None, None, "Ingen data"
     except Exception as e:
@@ -296,7 +287,6 @@ def calculate_trend_change(history, points):
     return ((end - start) / start) * 100 if start else 0.0
 
 def generate_mts_signal(kpi, history):
-    # Förenklad version av din logik för korthetens skull, men behåller kärnan
     p_sek = kpi['price']
     p7 = kpi['price_7d'] if kpi['price_7d'] else p_sek
     p30 = kpi['price_30d'] if kpi['price_30d'] else p_sek
@@ -306,7 +296,6 @@ def generate_mts_signal(kpi, history):
     
     rating = round(np.clip(pct7 * 0.4, -4, 4))
     
-    # Momentum (100m + 360m)
     pct100 = kpi['percent_change_100m']
     pct360 = kpi['percent_change_360m']
     
@@ -323,13 +312,13 @@ def generate_mts_signal(kpi, history):
     return txt, rating, col, pct7, pct30
 
 # =========================================================================
-# === REDIS SPARA/LADDA (NYCKELN TILL FIXEN) ===
+# === 4. REDIS SPARA/LADDA ===
 # =========================================================================
 
 def save_state_to_redis(kpi_cache, history_data, eur_sek):
     if not redis_client: return
     try:
-        # Serialisera Historik (datetime -> str)
+        # Serialisera Historik
         ser_hist = {}
         for pair, buffer in history_data.items():
             ser_hist[pair] = [{**i, 'time': i['time'].isoformat()} for i in buffer]
@@ -383,40 +372,35 @@ def log_excel(history):
 
 
 # =========================================================================
-# === BAKGRUNDSTRÅD (DATA COLLECTOR) ===
+# === 5. BAKGRUNDSTRÅD ===
 # =========================================================================
 
 def background_data_collector():
-    global global_kpi_cache # Används endast lokalt i tråden nu
-    
-    # Initiera lokal lagring för tråden
+    # Lokal lagring för tråden (inte global)
     thread_history = {pair: collections.deque(maxlen=max(SMA_WINDOWS)) for pair in CRYPTO_PAIRS.values()}
     thread_kpi = {}
-    
     cnt = 0
-    print(">>> Tråd startad.")
+    print(">>> Bakgrundstråd startad.")
     
     while True:
         try:
             rate = get_eur_sek_rate()
             now = datetime.now()
-            new_rates = {}
-            
             ohlc_update = (cnt % 60 == 0)
             
             for p_key, p_ticker in CRYPTO_PAIRS.items():
-                # 1. Hämta data
+                # Hämta data
                 t_data, err = get_crypto_data(p_ticker)
                 if err: 
                     print(f"Fel {p_key}: {err}")
                     continue
                 
-                # 2. Uppdatera historik
+                # Uppdatera historik
                 thread_history[p_ticker].append({
                     'time': now, 'price_sek': t_data['price_sek'], 'price_eur': t_data['price_eur']
                 })
                 
-                # 3. Hämta/Behåll OHLC
+                # Hämta OHLC
                 old_kpi = thread_kpi.get(p_ticker, {})
                 p7_sek = old_kpi.get('price_7d_sek')
                 p30_sek = old_kpi.get('price_30d_sek')
@@ -430,7 +414,7 @@ def background_data_collector():
                 if not p7_sek: p7_sek = t_data['price_sek']
                 if not p30_sek: p30_sek = t_data['price_sek']
                 
-                # 4. Beräkna Signaler
+                # Beräkna Signaler
                 h_list = list(thread_history[p_ticker])
                 t30_pct, t30_txt, t30_col = calculate_30min_trend(p_ticker, h_list)
                 p100 = calculate_trend_change(h_list, MAX_DASH_POINTS)
@@ -442,9 +426,8 @@ def background_data_collector():
                 }
                 
                 sig_txt, sig_rate, sig_col, p7_pct, p30_pct = generate_mts_signal(mts_in, h_list)
-                new_rates[p_ticker] = sig_rate
                 
-                # 5. Spara till lokal tråd-KPI
+                # Spara lokalt i tråd
                 thread_kpi[p_ticker] = {
                     **t_data,
                     'price_7d_sek': p7_sek, 'price_30d_sek': p30_sek,
@@ -454,19 +437,19 @@ def background_data_collector():
                     'percent_7d': p7_pct, 'percent_30d': p30_pct, 'time': now
                 }
                 
-                # 6. NOTISER (Körs direkt här eftersom tråden har datan)
+                # Notiser
                 if abs(sig_rate) >= 5:
                     last = SENT_NOTIFICATIONS.get(p_ticker, 0)
                     if (sig_rate * last <= 0) or (abs(sig_rate) > abs(last)):
                         notify_single(sig_txt, p_key, t_data['price_eur'], sig_rate)
                         SENT_NOTIFICATIONS[p_ticker] = sig_rate
                 
-                # (Spike checks here - omitted for brevity but works same way)
+                # (Spike checks förenklade, använd din fulla logik här vid behov)
+                # ...
 
-            # 7. SPARA TILL REDIS (För Webben)
+            # SPARA TILL REDIS
             save_state_to_redis(thread_kpi, thread_history, rate)
             
-            # 8. Sammanfattningar & Excel
             if cnt % 5 == 0: log_excel(thread_history)
             
             if now.hour in SUMMARY_SEND_TIMES and now.minute < 2:
@@ -476,18 +459,17 @@ def background_data_collector():
                     LAST_SUMMARY_SENT[now.hour] = now
             
             cnt += 1
-            
         except Exception as e:
             print(f"Trådfel: {e}")
             
         time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
 
 # =========================================================================
-# === DASH APP ===
+# === 6. DASH APP & CALLBACKS ===
 # =========================================================================
 
 app = Dash(__name__)
-server = app.server # För Gunicorn
+server = app.server 
 
 app.layout = html.Div([
     html.H1("📈 MTS Krypto (Redis)", style={'text-align': 'center', 'color': '#edf2f7'}),
@@ -505,27 +487,23 @@ app.layout = html.Div([
     html.Div(id='kpi-box', style={'text-align':'center', 'color':'#fff', 'margin':'20px', 'font-size':'20px'}),
     dcc.Graph(id='graph'),
     html.Div(id='table', style={'margin':'20px'})
-], style={'background-color': '#2d3748', 'min-height': '100vh', 'padding': '20px'})
+], style={'background-color': '#2d3748', 'min-height': '100vh', 'padding': '20px', 'font-family': 'sans-serif'})
 
 @app.callback(
     [Output('graph', 'figure'), Output('kpi-box', 'children')],
     [Input('web-update', 'n_intervals'), Input('pair', 'value'), Input('curr', 'value')]
 )
 def update_graph(n, pair, curr):
-    # LÄS FRÅN REDIS
     kpi, hist, _ = load_state_from_redis()
-    
-    if not kpi or pair not in kpi: return go.Figure(), "Laddar..."
+    if not kpi or pair not in kpi: return go.Figure(), "Laddar data..."
     
     data = kpi[pair]
     price_key = 'price_eur' if curr == 'EUR' else 'price_sek'
     unit = "€" if curr == 'EUR' else "kr"
     price = data.get(price_key, 0)
     
-    # KPI Text
     txt = [html.Span(f"{price:,.4f} {unit} ({format_percent(data.get('percent_change_24h'))})", style={'color': data.get('trend_30m_color')})]
     
-    # Graf
     h_data = hist.get(pair, [])
     if not h_data: return go.Figure(), txt
     
@@ -539,35 +517,46 @@ def update_graph(n, pair, curr):
         df['sma'] = df[price_key].rolling(30).mean()
         fig.add_trace(go.Scatter(x=df['time'], y=df['sma'], mode='lines', name='SMA30', line=dict(color='yellow')))
         
-    fig.update_layout(template='plotly_dark', paper_bgcolor='#2d3748', plot_bgcolor='#2d3748', height=500)
+    fig.update_layout(template='plotly_dark', paper_bgcolor='#2d3748', plot_bgcolor='#2d3748', height=500, xaxis_title="Tid", yaxis_title=f"Pris ({unit})")
     return fig, txt
 
 @app.callback(Output('table', 'children'), [Input('web-update', 'n_intervals'), Input('curr', 'value')])
 def update_table(n, curr):
     kpi, _, _ = load_state_from_redis()
-    if not kpi: return html.Div("Väntar på data...", style={'color':'yellow'})
+    if not kpi: return html.Div("Väntar på data från Redis...", style={'color':'yellow'})
     
     sorted_kpi = sorted(kpi.items(), key=lambda x: x[1].get('signal_rating', 0), reverse=True)
     rows = []
     for tic, d in sorted_kpi:
         name = next((k for k,v in CRYPTO_PAIRS.items() if v==tic), tic)
         p = d.get('price_eur' if curr=='EUR' else 'price_sek')
+        unit = "€" if curr == 'EUR' else "kr"
+        p_fmt = format_price_eur(p) if curr == 'EUR' else format_price_sek(p)
+        
         rows.append(html.Tr([
-            html.Td(name), html.Td(f"{p:,.4f}"), html.Td(format_percent(d.get('percent_change_360m'))),
-            html.Td(f"{d.get('signal_rating'):+}", style={'background-color': d.get('signal_color'), 'color':'white', 'text-align':'center'})
+            html.Td(name, style={'padding':'8px'}), 
+            html.Td(f"{p_fmt} {unit}", style={'text-align':'right', 'padding':'8px'}), 
+            html.Td(format_percent(d.get('percent_change_24h')), style={'text-align':'right', 'padding':'8px'}),
+            html.Td(format_percent(d.get('percent_change_360m')), style={'text-align':'right', 'padding':'8px'}),
+            html.Td(f"{d.get('signal_rating'):+}", style={'background-color': d.get('signal_color'), 'color':'white', 'text-align':'center', 'padding':'8px'}),
+            html.Td(d.get('signal_text'), style={'padding':'8px'})
         ], style={'border-bottom': '1px solid #444'}))
         
-    return html.Table([html.Tbody(rows)], style={'width':'100%', 'color':'#fff'})
+    return html.Table([
+        html.Thead(html.Tr([html.Th(c, style={'text-align':'left', 'padding':'8px'}) for c in ["Krypto", "Pris", "24h %", "360m %", "Betyg", "Signal"]]))
+    ] + [html.Tbody(rows)], style={'width':'100%', 'color':'#edf2f7', 'border-collapse':'collapse'})
 
 # =========================================================================
-# === EXECUTION ===
+# === 7. START AV TRÅD OCH SERVER ===
 # =========================================================================
 
-# Starta tråden om vi är i huvudprocessen (Gunicorn laddar denna fil)
+# Endast starta bakgrundstråden om vi är i huvudprocessen och Redis finns
 if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
     if redis_client:
         t = threading.Thread(target=background_data_collector, daemon=True)
         t.start()
+    else:
+        print("VARNING: Ingen Redis-klient. Bakgrundstråd startas ej.")
 
 if __name__ == '__main__':
     app.run_server(debug=True, use_reloader=False)

@@ -1611,7 +1611,8 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
 # =========================================================================
 # === HUVUDFUNKTION ===
 # =========================================================================
-
+# DENNA RAD KRÄVS FÖR DEPLOYMENT MED GUNICORN
+server = app.server
 if __name__ == '__main__':
     # 1. Starta Bakgrundslogik
     # Tråden kommer att hantera initial datainsamling, regelbunden uppdatering och notiser.

@@ -21,6 +21,7 @@ import logging
 from redis import from_url, exceptions
 import logging
 import gunicorn
+import copy
 
 # --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -82,12 +83,6 @@ CRYPTO_PAIRS = {
 }
 DEFAULT_PAIR_KEY = 'XRP (Ripple)'
 ### SLUT PÅ ÄNDRING ###
-
-# 2. Configure the basic logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
-
-# 3. Define the logger object that your code uses
-logger = logging.getLogger(__name__)
 
 # Filnamn för permanent datalagring (XLSX)
 EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
@@ -808,9 +803,36 @@ def calculate_sma(df, window, price_key='price_sek'):
     return df[price_key].rolling(window=min(window, len(df))).mean()
 ### SLUT PÅ ÄNDRING ###
 
+# Del 2 av 2: Bakgrundslogik och Dash-komponenter
+
 # =========================================================================
 # === NY FUNKTION: DEDIKERAD BAKGRUNDSLOGIK (LÅS-FIX APPLICERAD)
 # =========================================================================
+
+# (Antar att import copy, datetime, collections, threading, time, pd, go, html, dcc, Input, Output,
+#  app, data_lock, CRYPTO_PAIRS, DEFAULT_PAIR_KEY, DIFF_THRESHOLD, SORTED_SPIKE_THRESHOLDS,
+#  UPDATE_INTERVAL_SECONDS_DATA, UPDATE_INTERVAL_MS_WEB, SUMMARY_SEND_TIMES,
+#  DASH_PORT, format_price_eur, format_price_sek, format_percent,
+#  get_crypto_data, get_eur_sek_rate, get_ohlc_price,
+#  calculate_30min_trend, calculate_100min_change, calculate_360min_change,
+#  generate_mts_signal, notify_single, notify_spike, notify_diff, notify_periodic_summary,
+#  log_data_to_excel, calculate_sma, global_kpi_cache, SENT_NOTIFICATIONS,
+#  SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings,
+#  LAST_SUMMARY_SENT, data_history, itertools är definierade i del 1.)
+
+import copy # *** NY VIKTIG IMPORT ***
+from datetime import datetime
+import threading
+import time
+import collections
+import pandas as pd
+import plotly.graph_objects as go
+import dash_core_components as dcc
+import dash_html_components as html
+from dash.dependencies import Input, Output
+import itertools
+# (Antar att alla globala variabler och hjälpfunktioner från Del 1 finns här)
+
 
 def background_data_collector():
     """
@@ -833,7 +855,7 @@ def background_data_collector():
             initial_data_fetch = True
             
     if initial_data_fetch:
-        print(f"[{datetime.now().strftime('%H:%M:%M')}] Initial datainsamling påbörjad...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
         for pair_key, pair_ticker in CRYPTO_PAIRS.items():
             ### ÄNDRING: Hämta båda valutorna ###
             ticker_data, error = get_crypto_data(pair_ticker)
@@ -909,11 +931,11 @@ def background_data_collector():
                 if is_ohlc_update_time:
                     price_7d_eur, price_7d_sek, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
                     if error_7d:
-                         print(f"[{pair_key}] Varning vid 7d OHLC: {error_7d}")
+                             print(f"[{pair_key}] Varning vid 7d OHLC: {error_7d}")
                     
                     price_30d_eur, price_30d_sek, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
                     if error_30d:
-                         print(f"[{pair_key}] Varning vid 30d OHLC: {error_30d}")
+                             print(f"[{pair_key}] Varning vid 30d OHLC: {error_30d}")
                 
                 # 4. Uppdatera KPI-cache (använd gamla värden om nya OHLC saknas)
                 price_7d_ago_eur = price_7d_eur if price_7d_eur is not None else cached_kpi.get('price_7d_eur')
@@ -1055,7 +1077,8 @@ def background_data_collector():
             local_interval_counter += 1
             if local_interval_counter % 5 == 0:
                 # Skickar kopian av historiken till log_data_to_excel
-                log_data_to_excel({ticker: list(history) for ticker, history in data_history.items()})
+                # Använder deepcopy för att säkerställa att inga data race-villkor uppstår under loggning
+                log_data_to_excel(copy.deepcopy({ticker: list(history) for ticker, history in data_history.items()}))
             
             # 12. Periodisk Sammanfattningskontroll
             now_hour = current_time.hour
@@ -1070,7 +1093,7 @@ def background_data_collector():
                     threading.Thread(target=notify_periodic_summary).start() 
                     LAST_SUMMARY_SENT[now_hour] = current_time
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattningsnotis skickad för kl {now_hour}:00.")
-            
+                
             current_signal_ratings = new_ratings
             
             print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
@@ -1088,7 +1111,7 @@ def background_data_collector():
 def create_dashboard_layout():
     # --- WEBBFÄRGER/TEMA DEFINITION ---
     DARK_BACKGROUND = '#2d3748' # Mörk bakgrund
-    LIGHT_TEXT = '#edf2f7'      # Ljus text
+    LIGHT_TEXT = '#edf2f7'       # Ljus text
     CARD_BACKGROUND_CONTRAST = '#4a5568' # Bakgrund för enskilda kort/element (inte översikt)
     BORDER_COLOR = '#666'         # Ljusare grå kant
 
@@ -1184,7 +1207,7 @@ def update_web_only(n):
     return current_time_str, f"Webbdata redo för uppdatering {n} gånger."
 
 
-### ÄNDRING: Lyssnar nu på valutaväljaren ###
+### ÄNDRING: Lyssnar nu på valutaväljaren + DEEPCOPY-KORRIGERING ###
 @app.callback(
     Output('summary-table-container', 'children'),
     [Input('hidden-data-refresh', 'children'),
@@ -1193,13 +1216,14 @@ def update_web_only(n):
 def update_summary_table(hidden_refresh, selected_currency):
     
     # --- TEMAVARIABLER DEFINIERAS LOKALT ---
-    LIGHT_TEXT = '#edf2f7'         
+    LIGHT_TEXT = '#edf2f7'      
     CARD_ROW_BACKGROUND = '#000000' 
     # ----------------------------------------
     
     # Läs globala variabler under lås
     with data_lock:
-        local_kpi_cache = global_kpi_cache.copy()
+        # **KORRIGERING: Använd deepcopy för att undvika data race-villkor med nested objects**
+        local_kpi_cache = copy.deepcopy(global_kpi_cache)
 
     # SÄKERHETSKONTROLL
     if not local_kpi_cache or not local_kpi_cache.get(CRYPTO_PAIRS[DEFAULT_PAIR_KEY], {}).get('price_eur'): # Kontrollera EUR
@@ -1266,7 +1290,7 @@ def update_summary_table(hidden_refresh, selected_currency):
         percent_30d = kpi.get('percent_30d') # Från SEK-logik
         percent_100m = kpi.get('percent_change_100m') # Från SEK-logik
         percent_360m = kpi.get('percent_change_360m') # Från SEK-logik
-        diff_24h_eur = kpi.get('formel')
+        diff_24h_eur = kpi.get('formel') # Denna nyckel verkar vara oanvänd/felaktig i koden
 
         
         # Hämta 30m procent och trend (Linjär Regression)
@@ -1321,8 +1345,8 @@ def update_summary_table(hidden_refresh, selected_currency):
             html.Td(
                 diff_24h_eur,
                 style={
-                     **trend_30m_style,
-                     'color': 'black'
+                    **trend_30m_style,
+                    'color': 'black'
                 }
             ), # VISAR ENDAST FÄRG
         ]
@@ -1335,7 +1359,7 @@ def update_summary_table(hidden_refresh, selected_currency):
 ### SLUT PÅ ÄNDRING ###
 
 
-### ÄNDRING: Lyssnar nu på valutaväljaren ###
+### ÄNDRING: Lyssnar nu på valutaväljaren + DEEPCOPY-KORRIGERING ###
 @app.callback(
     Output('selected-pair-kpis', 'children'),
     [Input('hidden-data-refresh', 'children'),
@@ -1348,12 +1372,13 @@ def update_selected_pair_kpis(hidden_refresh, selected_ticker, selected_currency
     
     # Läs globala variabler under lås
     with data_lock:
-        local_kpi_cache = global_kpi_cache.copy()
+        # **KORRIGERING: Använd deepcopy**
+        local_kpi_cache = copy.deepcopy(global_kpi_cache)
         
     # SÄKERHETSKONTROLL
     if not local_kpi_cache or selected_ticker not in local_kpi_cache or not local_kpi_cache[selected_ticker].get('price_eur'):
         return html.Div("Väntar på data för det valda paret...", style={'color': '#aaa'})
-         
+            
     kpi = local_kpi_cache[selected_ticker]
 
     # --- Ställ in nycklar och formatering baserat på vald valuta ---
@@ -1398,7 +1423,7 @@ def update_selected_pair_kpis(hidden_refresh, selected_ticker, selected_currency
     return html.Div(data_list)
 ### SLUT PÅ ÄNDRING ###
 
-### ÄNDRING: Lyssnar nu på valutaväljaren ###
+### ÄNDRING: Lyssnar nu på valutaväljaren + DEEPCOPY-KORRIGERING ###
 @app.callback(
     Output('live-graph', 'figure'),
     [Input('hidden-data-refresh', 'children'),
@@ -1409,7 +1434,8 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
     
     # Läs globala variabler under lås
     with data_lock:
-        history = data_history.get(selected_ticker, collections.deque())
+        # **KORRIGERING: Använd deepcopy på history**
+        history = copy.deepcopy(data_history.get(selected_ticker, collections.deque()))
         kpi = global_kpi_cache.get(selected_ticker, {}) # Hämta KPI
     
     # Använd lokal kopia av historik för att skapa DataFrame utanför låset
@@ -1508,7 +1534,7 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
                 font=dict(color="#00FA9A", size=10) # NY FÄRG
             )
         )
-        
+    
     if low_24h is not None and low_24h > 0:
         shapes.append(
             dict(
@@ -1526,60 +1552,78 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
                 font=dict(color="#B22222", size=10) # NY FÄRG
             )
         )
-    # --- SLUT Lägg till horisontella linjer ---
+    # --- SLUT PÅ 24h Hög/Låg ---
+
+    # Beräkna aktuell signalfärg (används för att markera aktuell punkt)
+    signal_color = kpi.get('signal_color', '#999999')
+    current_price = df[price_key].iloc[-1]
+    current_time = df['time'].iloc[-1]
+    
+    # Lägg till en markör för den sista punkten
+    fig.add_trace(go.Scatter(
+        x=[current_time], 
+        y=[current_price], 
+        mode='markers', 
+        name='Nuvarande Pris',
+        marker=dict(size=10, color=signal_color, line=dict(width=2, color='white')),
+        hoverinfo='name+y'
+    ))
 
     fig.update_layout(
-        title=f'Prisutveckling för {pair_key} (Senaste {len(df)} min)',
-        xaxis_title='Tid',
-        yaxis_title=f'Pris ({unit})', # Dynamisk Y-axel
+        title=f"{pair_key} Prisutveckling ({unit} - Senaste {len(df)} minuter)",
+        xaxis_title="Tidpunkt",
+        yaxis_title=f"Pris ({unit})",
+        xaxis=dict(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=60, label="1h", step="minute", stepmode="backward"),
+                    dict(count=360, label="6h", step="minute", stepmode="backward"),
+                    dict(step="all")
+                ])
+            ),
+            rangeslider=dict(visible=False),
+            type="date"
+        ),
+        template="plotly_dark", 
         hovermode="x unified",
-        template="plotly_dark", # Använd det mörka Plotly-temat
-        margin=dict(l=40, r=40, t=40, b=20),
-        shapes=shapes,
-        annotations=annotations,
-        # Lägg till en layout justering för att säkerställa att legend visas bra
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        )
+        margin=dict(l=40, r=40, t=60, b=20),
+        shapes=shapes, # Lägg till Hög/Låg linjerna
+        annotations=annotations # Lägg till Hög/Låg etiketterna
     )
+
+    # Förbättrad Y-axel formatering baserat på prisstorlek
+    if current_price < 0.1:
+        tickformat = '.8f'
+    elif current_price < 10:
+        tickformat = '.4f'
+    elif current_price < 1000:
+        tickformat = '.2f'
+    else:
+        tickformat = '.0f'
+
+    fig.update_yaxes(tickformat=tickformat)
 
     return fig
 ### SLUT PÅ ÄNDRING ###
 
-# Lägg till denna rad för att exponera server-instansen för Gunicorn/Render
-server = app.server 
-# VIKTIGT: Sätt layouten globalt så att den finns när Gunicorn startar servern.
-app.layout = create_dashboard_layout()
 
+# =========================================================================
+# === HUVUDFUNKTION ===
+# =========================================================================
 
-# --- INITIALISERING OCH KÖRNING ---
 if __name__ == '__main__':
+    # 1. Starta Bakgrundslogik
+    # Tråden kommer att hantera initial datainsamling, regelbunden uppdatering och notiser.
+    data_thread = threading.Thread(target=background_data_collector, daemon=True)
+    data_thread.start()
 
-    # Använd Renders PORT-miljövariabel, annars 8050 lokalt
-    port = int(os.environ.get('PORT', 8050)) 
-    app.run_server(debug=True, port=port)
-    
-    # 1. Ladda historik från Excel (körs en gång vid start)
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Laddar historisk data från Excel...")
-    load_historical_data()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Historisk data laddad/verifierad.")
-    
-    # 2. Skicka en testnotis via Telegram (körs en gång vid start)
-    send_test_notification()
-    
-    # 3. Sätt layout (DENNA ÄR BORTTAGEN)
-    
-    # 4. STARTA DEN DEDIKERADE BAKGRUNDSTRÅDEN
-    collector_thread = threading.Thread(target=background_data_collector)
-    collector_thread.daemon = True 
-    collector_thread.start()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Bakgrundstråd startad.")
+    # 2. Skapa Dash-applikationens layout
+    app.layout = create_dashboard_layout()
 
-    # 5. Kör applikationen
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Startar Dash-servern på http://0.0.0.0:8050/ (host='0.0.0.0').")
-    
-    app.run(debug=False, host='0.0.0.0', port=8050)
+    # 3. Starta Dash-servern
+    print("---------------------------------------------------------")
+    print(f">>> Startar Dash webbserver (port {DASH_PORT})... <<<")
+    print("---------------------------------------------------------")
+
+    # Använd debug=False och dev_tools_hot_reload=False för att säkerställa att bakgrundstråden bara startas en gång.
+    app.run_server(debug=False, port=DASH_PORT, host='0.0.0.0', dev_tools_hot_reload=False)

@@ -138,9 +138,6 @@ DEFAULT_DATA = {
 }
 
 
-# -------------------------------------------------------------
-app = Dash(__name__)
-
 # --- GLOBAL LAGER ---
 data_lock = threading.Lock()
 data_history = {pair: collections.deque(maxlen=max(SMA_WINDOWS)) for pair in CRYPTO_PAIRS.values()}

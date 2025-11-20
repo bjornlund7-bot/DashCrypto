@@ -93,6 +93,18 @@ OHLC_INTERVAL_MIN = 1 # Använd 5 minuters intervall för grafen
 # SMA-fönster för grafen
 SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]
 
+
+# =========================================================================
+# === KONFIGURATION FÖR TELEGRAM (Hämta tokens och chat-ID från Renders miljövariabler) ===
+
+# Byt ut 'DIN_TOKEN_VARIABEL' och 'DITT_CHAT_ID_VARIABEL' mot de exakta namnen
+# du har angett i Renders inställningar (t.ex. TELEGRAM_TOKEN och TELEGRAM_CHATID)
+
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
+# =========================================================================
+
 # Extrahera symboler och tickers
 COINS_LABELS = list(CRYPTO_PAIRS.keys())
 # Skapar en lista med symboler: ['XRP', 'BTC', 'ETH', ...]
@@ -124,6 +136,223 @@ DEFAULT_DATA = {
     'timestamp': time.time(),
     'EUR_SEK_RATE': 11.0 # Standardväxelkurs
 }
+
+
+# -------------------------------------------------------------
+app = Dash(__name__)
+
+# --- GLOBAL LAGER ---
+data_lock = threading.Lock()
+data_history = {pair: collections.deque(maxlen=max(SMA_WINDOWS)) for pair in CRYPTO_PAIRS.values()}
+global_kpi_cache = {}
+SENT_NOTIFICATIONS = {pair: 0 for pair in CRYPTO_PAIRS.values()}
+SENT_DIFF_NOTIFICATIONS = {}
+current_signal_ratings = {}
+
+# NY STRUKTUR FÖR SPIKE-NOTISER (Per Tidsram, Per Par, Per Tröskel)
+SENT_SPIKE_NOTIFICATIONS = {
+    tf: {
+        pair: {label: False for label in SPIKE_THRESHOLDS.keys()}
+        for pair in CRYPTO_PAIRS.values()
+    }
+    for tf in TIMEFRAMES_FOR_SPIKES
+}
+
+# För periodisk sammanfattning
+SUMMARY_SEND_TIMES = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] 
+LAST_SUMMARY_SENT = {hour: None for hour in SUMMARY_SEND_TIMES} 
+
+
+### ÄNDRING: Omdöpt format_sek till format_price_sek och lagt till format_price_eur ###
+def format_price_sek(value):
+    """Formaterar ett tal till 4 decimaler med tusenavgränsare (mellanslag) i SEK-stil."""
+    if not isinstance(value, (int, float)) or np.isnan(value) or value is None:
+        return "N/A"
+    return f"{value:,.4f}".replace(",", " ").replace(".", ",")
+
+def format_price_eur(value):
+    """Formaterar ett tal till 4 decimaler med tusenavgränsare (mellanslag) i EUR-stil."""
+    if not isinstance(value, (int, float)) or np.isnan(value) or value is None:
+        return "N/A"
+    # Använder standard . för decimaler för EUR
+    return f"{value:,.4f}".replace(",", " ")
+
+def format_percent(value):
+    """Formaterar en procentuell förändring med tecken och 2 decimaler."""
+    if value is None:
+        return "N/A %"
+    if not isinstance(value, (int, float)) or np.isnan(value):
+        return "N/A %"
+    return f"{value:+.2f} %"
+### SLUT PÅ ÄNDRING ###
+
+# --- TELEGRAM NOTIS FUNKTIONER ---
+
+def send_telegram_message(message_text):
+    """Generisk funktion för att skicka meddelanden via Telegram API."""
+    base_url = "https://api.telegram.org/bot{token}/sendMessage"
+    url = base_url.format(token=TELEGRAM_BOT_TOKEN)
+
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message_text,
+        'parse_mode': 'Markdown'
+    }
+
+    try:
+        response = requests.post(url, data=payload, timeout=5)
+        response.raise_for_status()
+
+        time.sleep(1.0)
+
+        return True
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] FEL vid skickande av Telegramnotis: {e}")
+        return False
+
+
+def notify_periodic_summary():
+    """Skickar en periodisk sammanfattning av de senaste 360m (6h) trenderna."""
+    global global_kpi_cache
+    
+    # 1. Hämta en säker kopia av datan
+    with data_lock:
+        local_kpi_cache = global_kpi_cache.copy()
+        
+    if not local_kpi_cache:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattning misslyckades: KPI-cache är tom.")
+        return False
+        
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Skickar Periodisk Sammanfattning (360m trend)...")
+
+    # 2. Förbered data för sortering och formatering
+    summary_data = []
+    
+    # OBS: Vi använder CRYPTO_PAIRS.items() för att få det visningsvänliga namnet
+    for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+        kpi = local_kpi_cache.get(pair_ticker, {})
+        
+        # Måste ha alla fält
+        change_360m = kpi.get('percent_change_360m')
+        signal_rating = kpi.get('signal_rating')
+        change_24h = kpi.get('percent_change_24h') # HÄMTA NYTT FÄLT: 24h förändring
+        aktuellt_varde = kpi.get('current_price_eur') # HÄMTA NYTT FÄLT: Aktuellt varde
+
+        # Välj ett enklare namn för tabellen
+        display_name = pair_key.split('/')[0].strip()
+        display_name = re.sub(r'\s*\((.*?)\)', '', display_name).strip()
+
+
+        if change_360m is not None and signal_rating is not None and change_24h is not None:
+            summary_data.append({
+                'crypto': display_name,
+                'change_360m': change_360m,
+                'rating': signal_rating,
+                'change_24h': change_24h, # Lägg till 24h
+                'aktuellt_varde': aktuellt_varde, # 2025-11-18
+            })
+
+    if not summary_data:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattning misslyckades: Ingen meningsfull 360m data hittades.")
+        return False
+
+    # 3. Sortera data (Högst procentuell förändring överst)
+    sorted_summary = sorted(summary_data, key=lambda x: x['change_360m'], reverse=True)
+    
+    # 4. Bygg meddelandet
+    header = (
+        f"⏳ *PERIODISK SAMMANFATTNING (360 MIN TREND)* ⏳\n\n"
+        f"Översikt över 6-timmars och 24-timmars rörelse samt MTS-signalbetyg.\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"| Krypto | 360m % | 24h % | Betyg | Kurs |\n" # NYA KOLUMNER
+        f"|---|---|---|---|---|\n"
+    )
+    
+    table_rows = []
+    for item in sorted_summary:
+        # Formatera kolumner
+        crypto_col = f"`{item['crypto']}`"
+        change_360m_col = f"`{format_percent(item['change_360m'])}`"
+        change_24h_col = f"`{format_percent(item['change_24h'])}`" # Formatera 24h
+        rating_col = f"`{item['rating']:+}`"
+        aktuellt_varde_col = f"`{item['aktuellt_varde']}`"
+
+        
+        table_rows.append(f"| {crypto_col} | {change_360m_col} | {change_24h_col} | {rating_col} | {aktuellt_varde_col} |")
+        
+    message = header + "\n".join(table_rows)
+
+    # 5. Skicka meddelandet
+    return send_telegram_message(message)
+
+
+def notify_diff(crypto1, rating1, crypto2, rating2, difference):
+    """Skickar notis vid stor signalbetygsskillnad."""
+    message = (
+        f"🚨 *ALARM SIGNALDIFFERENS ({DIFF_THRESHOLD}-steg)* 🚨\n\n"
+        f"Skillnad i signalbetyg har uppnått tröskeln (Diff: `{difference}` >= `{DIFF_THRESHOLD}`).\n\n"
+        f"Krypto 1: *{crypto1}* (Betyg: `{rating1:+}`)\n"
+        f"Krypto 2: *{crypto2}* (Betyg: `{rating2:+}`)\n\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    return send_telegram_message(message)
+
+
+def notify_single(signal_text, pair_key, current_price_eur, signal_rating):
+    """Skickar notis vid stark Köp/Sälj-signal. Använder ALLTID EUR."""
+
+    price_formatted = f"{current_price_eur:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    message = (
+        f"🔔 *MTS HANDELSTRIGGER (Betyg {signal_rating:+})* 🔔\n\n"
+        f"Kryptovaluta: *{pair_key}*\n"
+        f"Signal: *{signal_text}*\n"
+        f"Pris: `{price_formatted} EUR`\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    return send_telegram_message(message)
+
+def notify_spike(timeframe_label, pair_key, percent_change, current_price_eur, threshold_label):
+    """(GENERALISERAD) Skickar notis vid kraftig uppgång/nedgång på en specifik tidsram. Använder ALLTID EUR."""
+    
+    price_formatted = f"{current_price_eur:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    direction = "UPPGÅNG" if percent_change >= 0 else "NEDGÅNG"
+    emoji = "🚀" if percent_change >= 0 else "📉"
+    
+    message = (
+        f"{emoji} *{timeframe_label.upper()} PRISVARNING ({threshold_label} {direction})* {emoji}\n\n"
+        f"Kryptovaluta: *{pair_key}*\n"
+        f"Förändring: *{format_percent(percent_change)}* på {timeframe_label}.\n"
+        f"Tröskel: *{threshold_label}* passerad.\n"
+        f"Pris: `{price_formatted} EUR`\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    return send_telegram_message(message)
+
+
+def send_test_notification():
+    """Skickar en testnotis via Telegram."""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Försöker skicka TEST-TELEGRAM...")
+
+    message = (
+        f"✅ *OMSTART* ✅\n\n"
+        f"Detta är ett automatiskt testmeddelande från din Kryptospårare.\n"
+        f"Telegram-notiser fungerar korrekt (om du ser detta i din chatt).\n\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    success = send_telegram_message(message)
+    if success:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] TEST TELEGRAM SKICKAT. Kontrollera din chatt.")
+    else:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] TEST TELEGRAM MISSLYCKADES. Kontrollera dina Telegram-konstanter och/eller felloggen ovan.")
+    return success
+
+
+
+
 
 
 # --- API Data Hämtning ---

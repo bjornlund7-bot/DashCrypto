@@ -19,7 +19,8 @@ import requests
 import json
 import logging
 from redis import from_url, exceptions
-
+import logging
+import gunicorn
 
 # --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -1551,6 +1552,10 @@ app.layout = create_dashboard_layout()
 
 # --- INITIALISERING OCH KÖRNING ---
 if __name__ == '__main__':
+
+    # Använd Renders PORT-miljövariabel, annars 8050 lokalt
+    port = int(os.environ.get('PORT', 8050)) 
+    app.run_server(debug=True, port=port)
     
     # 1. Ladda historik från Excel (körs en gång vid start)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Laddar historisk data från Excel...")

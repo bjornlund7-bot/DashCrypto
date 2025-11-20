@@ -1,0 +1,36 @@
+import threading
+import time 
+# ... (importer för dash, numpy, datetime, etc. från Del 1) ...
+
+# Globala variabler (definierade i Del 1, men viktiga att nämna)
+global data_lock 
+global global_kpi_cache
+# ... (övriga globala variabler) ...
+
+# =========================================================================
+# === STARTKOD FÖR APPLIKATIONEN (MÅSTE LIGGA SIST) ===
+# =========================================================================
+
+# 1. Starta bakgrundstråden
+# Obs! 'daemon=True' gör att tråden stängs av automatiskt när huvudprogrammet stängs.
+background_thread = threading.Thread(target=background_data_collector, daemon=True)
+background_thread.start()
+print("Background data collector thread started.")
+
+# 2. Skapa och konfigurera Dash-appen
+# (App och server-initialisering antas ha skett tidigare, t.ex. app = dash.Dash(__name__))
+app.layout = create_dashboard_layout() 
+
+# 3. Kör servern i ett säkert läge för delade globala variabler
+if __name__ == '__main__':
+    # VIKTIGT:
+    # use_reloader=False förhindrar att Dash skapar en separat barnprocess för att ladda om
+    # vid kodändringar. Denna barnprocess skulle ha en egen kopia av minnet 
+    # och INTE dela de globala variablerna med din bakgrundstråd.
+    
+    app.run_server(
+        debug=True,         # Kan vara True under utveckling, men...
+        use_reloader=False, # MÅSTE vara False för att dela globala variabler
+        host='0.0.0.0',
+        port=8050
+    )

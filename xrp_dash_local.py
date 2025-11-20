@@ -92,8 +92,8 @@ SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_3
 
 # =========================================================================
 # === KONFIGURATION FÖR TELEGRAM (Användarens sparade tokens och chat-ID) ===
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_BOT_TOKEN = '8266312220:AAEpAFiIsf9UjaoKUOR8TCroLJIyIAR5jM4' 
+TELEGRAM_CHAT_ID = '8342999996'    
 # =========================================================================
 
 # --- Strategikonstanter ---
@@ -1513,30 +1513,26 @@ server = app.server
 app.layout = create_dashboard_layout()
 
 
-# =========================================================================
-# === STARTKOD FÖR APPLIKATIONEN (MÅSTE LIGGA SIST) ===
-# =========================================================================
-
-# 1. Starta bakgrundstråden
-# Obs! 'daemon=True' gör att tråden stängs av automatiskt när huvudprogrammet stängs.
-background_thread = threading.Thread(target=background_data_collector, daemon=True)
-background_thread.start()
-print("Background data collector thread started.")
-
-# 2. Skapa och konfigurera Dash-appen
-# (App och server-initialisering antas ha skett tidigare, t.ex. app = dash.Dash(__name__))
-app.layout = create_dashboard_layout() 
-
-# 3. Kör servern i ett säkert läge för delade globala variabler
+# --- INITIALISERING OCH KÖRNING ---
 if __name__ == '__main__':
-    # VIKTIGT:
-    # use_reloader=False förhindrar att Dash skapar en separat barnprocess för att ladda om
-    # vid kodändringar. Denna barnprocess skulle ha en egen kopia av minnet 
-    # och INTE dela de globala variablerna med din bakgrundstråd.
     
-    app.run_server(
-        debug=True,         # Kan vara True under utveckling, men...
-        use_reloader=False, # MÅSTE vara False för att dela globala variabler
-        host='0.0.0.0',
-        port=8050
-    )
+    # 1. Ladda historik från Excel (körs en gång vid start)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Laddar historisk data från Excel...")
+    load_historical_data()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Historisk data laddad/verifierad.")
+    
+    # 2. Skicka en testnotis via Telegram (körs en gång vid start)
+    send_test_notification()
+    
+    # 3. Sätt layout (DENNA ÄR BORTTAGEN)
+    
+    # 4. STARTA DEN DEDIKERADE BAKGRUNDSTRÅDEN
+    collector_thread = threading.Thread(target=background_data_collector)
+    collector_thread.daemon = True 
+    collector_thread.start()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Bakgrundstråd startad.")
+
+    # 5. Kör applikationen
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Startar Dash-servern på http://0.0.0.0:8050/ (host='0.0.0.0').")
+    
+    app.run(debug=False, host='0.0.0.0', port=8050)

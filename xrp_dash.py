@@ -22,6 +22,9 @@ from redis import from_url, exceptions
 import logging
 import gunicorn
 import copy
+import dash
+from dash import dcc # Den nya platsen för Dash Core Components
+from dash import html # Den nya platsen för Dash HTML Components
 
 # --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -827,8 +830,6 @@ import time
 import collections
 import pandas as pd
 import plotly.graph_objects as go
-import dash_core_components as dcc
-import dash_html_components as html
 from dash.dependencies import Input, Output
 import itertools
 # (Antar att alla globala variabler och hjälpfunktioner från Del 1 finns här)

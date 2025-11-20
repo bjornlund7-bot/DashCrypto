@@ -102,7 +102,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 # =========================================================================
 
 
-# --- Redis Konfiguration ---
+# --- Redis Konfiguration Hoppas detta ska hjälpa!---
 REDIS_URL = os.environ.get('REDIS_URL')
 
 if REDIS_URL:

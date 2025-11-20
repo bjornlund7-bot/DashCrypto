@@ -116,7 +116,7 @@ if REDIS_URL:
     try:
         r = from_url(REDIS_URL)
         r.ping()
-        logger.debug("✅ Ansluten till Redis!")
+        print("✅ Ansluten till Redis!")
     except exceptions.ConnectionError as e:
         logger.error(f"❌ Kunde inte ansluta till Redis: {e}")
         r = None

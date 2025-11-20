@@ -93,6 +93,13 @@ OHLC_INTERVAL_MIN = 1 # Använd 5 minuters intervall för grafen
 # SMA-fönster för grafen
 SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]
 
+# Extrahera symboler och tickers
+COINS_LABELS = list(CRYPTO_PAIRS.keys())
+# Skapar en lista med symboler: ['XRP', 'BTC', 'ETH', ...]
+COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
+# Skapar en mappning från symbol till full label: {'XRP': 'XRP (Ripple)', ...}
+SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
+
 CURRENCIES = ['EUR', 'SEK']
 
 
@@ -118,14 +125,6 @@ DEFAULT_DATA = {
     'EUR_SEK_RATE': 11.0 # Standardväxelkurs
 }
 
-
-# --- Telegram Mock-funktion ---
-
-def mock_telegram_send(coin_label, price, currency, threshold):
-    """Simulerar utskick av Telegram-notis."""
-    logger.info(f"--- TELEGRAM MOCK: Alert! {coin_label} ({currency}) nådde gränsvärde {threshold:.4f}. Nuvarande pris: {price:.4f} ---")
-    # I en verklig app skulle detta anropa en bot API.
-    pass
 
 # --- API Data Hämtning ---
 

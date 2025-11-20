@@ -15,11 +15,9 @@ import threading
 from dash import exceptions
 import re
 import sys 
-
-# --- NYA IMPORTER FÖR DELAT MINNE ---
 import redis
 import json
-# ------------------------------------
+
 
 # --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -28,6 +26,8 @@ EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
 ### ÄNDRING: Uppdaterade etiketter till EUR som standard ###
 # Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
+data_lock = threading.Lock()
+
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRPEUR',
     'BTC (Bitcoin)': 'BTCEUR',

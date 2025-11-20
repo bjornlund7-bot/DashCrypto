@@ -16,6 +16,11 @@ from dash import exceptions
 import re
 import sys 
 
+# --- NYA IMPORTER FÖR DELAT MINNE ---
+import redis
+import json
+# ------------------------------------
+
 # --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
@@ -86,6 +91,11 @@ UPDATE_INTERVAL_SECONDS_DATA = 60 # 60 sekunder - DATA HÄMTAS ENDAST I BAKGRUND
 MAX_DASH_POINTS = 1440         # 24 h historik
 SUMMARY_TREND_POINTS_30M = 30    # 30 minuter
 SUMMARY_TREND_POINTS_360M = 360  # 360 minuter (6 timmar)
+
+# Redis-relaterade nycklar
+REDIS_KPI_KEY = 'global_kpi_cache_json'
+REDIS_HISTORY_KEY = 'data_history_json'
+REDIS_EUR_SEK_KEY = 'eur_sek_rate'
 
 # SMA-fönster för grafen
 SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]

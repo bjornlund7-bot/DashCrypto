@@ -28,9 +28,9 @@ EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
 # Filnamn och inställningar
 EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
-UPDATE_INTERVAL_MS_WEB = 5000      # Webb uppdateras var 5:e sek
-UPDATE_INTERVAL_SECONDS_DATA = 60  # Data hämtas var 60:e sek
-MAX_DASH_POINTS = 1440             # 24h historik
+UPDATE_INTERVAL_MS_WEB = 5000      
+UPDATE_INTERVAL_SECONDS_DATA = 60  
+MAX_DASH_POINTS = 1440             
 SUMMARY_TREND_POINTS_30M = 30      
 SUMMARY_TREND_POINTS_360M = 360    
 SMA_WINDOWS = [30, 1440, 360]
@@ -121,23 +121,23 @@ SENT_SPIKE_NOTIFICATIONS = {
 # === 2. REDIS INITIALISERING ===
 # =========================================================================
 
-# Hämta URL från Renders miljövariabel
 REDIS_URL = os.environ.get('REDIS_URL')
 redis_client = None
 
+print(f"[DEBUG] Initierar Redis...")
 if REDIS_URL:
     try:
         redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         redis_client.ping()
-        print(f"✅ Ansluten till Redis!")
+        print(f"[DEBUG] ✅ Ansluten till Redis!")
     except Exception as e:
-        print(f"❌ Redis-fel: {e}")
+        print(f"[DEBUG] ❌ Redis-fel vid start: {e}")
 else:
-    print("⚠️ Ingen REDIS_URL inställd i Environment Variables.")
+    print("[DEBUG] ⚠️ Ingen REDIS_URL inställd.")
 
 
 # =========================================================================
-# === 3. HJÄLPFUNKTIONER (Format, Data, Telegram) ===
+# === 3. HJÄLPFUNKTIONER ===
 # =========================================================================
 
 def format_price_sek(value):
@@ -177,7 +177,7 @@ def send_telegram_message(message_text):
         time.sleep(1.0)
         return True
     except Exception as e:
-        print(f"Telegram-fel: {e}")
+        print(f"[DEBUG] Telegram-fel: {e}")
         return False
 
 def notify_single(signal_text, pair_key, current_price_eur, signal_rating):
@@ -199,7 +199,6 @@ def notify_periodic_summary(kpi_cache):
         rating = kpi.get('signal_rating')
         c24 = kpi.get('percent_change_24h')
         val = kpi.get('price_eur')
-        
         if c360 is not None and rating is not None:
             name = pair_key.split('/')[0].split('(')[0].strip()
             summary_data.append({'c': name, '360': c360, 'r': rating, '24': c24, 'v': val})
@@ -305,10 +304,8 @@ def generate_mts_signal(kpi, history):
     elif pct100 <= -0.1: rating -= 1
     
     rating = np.clip(rating, -10, 10)
-    
     txt = "KÖP" if rating >= 5 else "SÄLJ" if rating <= -5 else "NEUTRAL"
     col = '#00FA9A' if rating >= 5 else '#B22222' if rating <= -5 else '#555'
-    
     return txt, rating, col, pct7, pct30
 
 # =========================================================================
@@ -316,7 +313,9 @@ def generate_mts_signal(kpi, history):
 # =========================================================================
 
 def save_state_to_redis(kpi_cache, history_data, eur_sek):
-    if not redis_client: return
+    if not redis_client:
+        print("[DEBUG] Kan inte spara: Ingen Redis-klient.")
+        return
     try:
         # Serialisera Historik
         ser_hist = {}
@@ -333,8 +332,9 @@ def save_state_to_redis(kpi_cache, history_data, eur_sek):
         redis_client.set(REDIS_KPI_KEY, json.dumps(ser_kpi))
         redis_client.set(REDIS_HISTORY_KEY, json.dumps(ser_hist))
         redis_client.set(REDIS_EUR_SEK_KEY, str(eur_sek))
+        print(f"[DEBUG] Data sparad till Redis (KPI: {len(ser_kpi)} par)")
     except Exception as e:
-        print(f"Redis Write Error: {e}")
+        print(f"[DEBUG] Redis Write Error: {e}")
 
 def load_state_from_redis():
     if not redis_client: return {}, {}, 11.50
@@ -353,10 +353,9 @@ def load_state_from_redis():
             for i in l:
                 i['time'] = datetime.fromisoformat(i['time'])
                 hist[pair].append(i)
-                
         return kpi, hist, float(r_val) if r_val else 11.50
     except Exception as e:
-        print(f"Redis Read Error: {e}")
+        print(f"[DEBUG] Redis Read Error: {e}")
         return {}, {}, 11.50
 
 def log_excel(history):
@@ -367,7 +366,7 @@ def log_excel(history):
                 if df.empty: continue
                 df['time'] = df['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
                 df.to_excel(writer, sheet_name=sanitize_sheet_name(pair), index=False)
-        print("Excel sparad.")
+        print("[DEBUG] Excel sparad.")
     except: pass
 
 
@@ -376,31 +375,28 @@ def log_excel(history):
 # =========================================================================
 
 def background_data_collector():
-    # Lokal lagring för tråden (inte global)
     thread_history = {pair: collections.deque(maxlen=max(SMA_WINDOWS)) for pair in CRYPTO_PAIRS.values()}
     thread_kpi = {}
     cnt = 0
-    print(">>> Bakgrundstråd startad.")
+    print(">>> [DEBUG] Bakgrundstråd startad och snurrar!")
     
     while True:
         try:
             rate = get_eur_sek_rate()
             now = datetime.now()
             ohlc_update = (cnt % 60 == 0)
+            print(f"[DEBUG] Loop {cnt}: Hämtar data... (OHLC={ohlc_update})")
             
             for p_key, p_ticker in CRYPTO_PAIRS.items():
-                # Hämta data
                 t_data, err = get_crypto_data(p_ticker)
                 if err: 
-                    print(f"Fel {p_key}: {err}")
+                    print(f"[DEBUG] Fel {p_key}: {err}")
                     continue
                 
-                # Uppdatera historik
                 thread_history[p_ticker].append({
                     'time': now, 'price_sek': t_data['price_sek'], 'price_eur': t_data['price_eur']
                 })
                 
-                # Hämta OHLC
                 old_kpi = thread_kpi.get(p_ticker, {})
                 p7_sek = old_kpi.get('price_7d_sek')
                 p30_sek = old_kpi.get('price_30d_sek')
@@ -414,7 +410,6 @@ def background_data_collector():
                 if not p7_sek: p7_sek = t_data['price_sek']
                 if not p30_sek: p30_sek = t_data['price_sek']
                 
-                # Beräkna Signaler
                 h_list = list(thread_history[p_ticker])
                 t30_pct, t30_txt, t30_col = calculate_30min_trend(p_ticker, h_list)
                 p100 = calculate_trend_change(h_list, MAX_DASH_POINTS)
@@ -427,7 +422,6 @@ def background_data_collector():
                 
                 sig_txt, sig_rate, sig_col, p7_pct, p30_pct = generate_mts_signal(mts_in, h_list)
                 
-                # Spara lokalt i tråd
                 thread_kpi[p_ticker] = {
                     **t_data,
                     'price_7d_sek': p7_sek, 'price_30d_sek': p30_sek,
@@ -437,16 +431,12 @@ def background_data_collector():
                     'percent_7d': p7_pct, 'percent_30d': p30_pct, 'time': now
                 }
                 
-                # Notiser
                 if abs(sig_rate) >= 5:
                     last = SENT_NOTIFICATIONS.get(p_ticker, 0)
                     if (sig_rate * last <= 0) or (abs(sig_rate) > abs(last)):
                         notify_single(sig_txt, p_key, t_data['price_eur'], sig_rate)
                         SENT_NOTIFICATIONS[p_ticker] = sig_rate
-                
-                # (Spike checks förenklade, använd din fulla logik här vid behov)
-                # ...
-
+            
             # SPARA TILL REDIS
             save_state_to_redis(thread_kpi, thread_history, rate)
             
@@ -460,7 +450,7 @@ def background_data_collector():
             
             cnt += 1
         except Exception as e:
-            print(f"Trådfel: {e}")
+            print(f"[DEBUG] Kritiskt Trådfel: {e}")
             
         time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
 
@@ -550,13 +540,13 @@ def update_table(n, curr):
 # === 7. START AV TRÅD OCH SERVER ===
 # =========================================================================
 
-# Endast starta bakgrundstråden om vi är i huvudprocessen och Redis finns
 if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
     if redis_client:
         t = threading.Thread(target=background_data_collector, daemon=True)
         t.start()
+        print("[DEBUG] Startkommando för tråd skickat.")
     else:
-        print("VARNING: Ingen Redis-klient. Bakgrundstråd startas ej.")
+        print("[DEBUG] VARNING: Ingen Redis-klient. Bakgrundstråd startas ej.")
 
 if __name__ == '__main__':
     app.run_server(debug=True, use_reloader=False)

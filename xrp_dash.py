@@ -83,6 +83,12 @@ CRYPTO_PAIRS = {
 DEFAULT_PAIR_KEY = 'XRP (Ripple)'
 ### SLUT PÅ ÄNDRING ###
 
+# 2. Configure the basic logging setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') 
+
+# 3. Define the logger object that your code uses
+logger = logging.getLogger(__name__)
+
 # Filnamn för permanent datalagring (XLSX)
 EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
 

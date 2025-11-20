@@ -473,25 +473,25 @@ server = app.server
 
 app.layout = html.Div([
     html.H1("📈 MTS Krypto (Redis)", style={'text-align': 'center', 'color': '#edf2f7'}),
-    dcc.Interval(id='web-update', interval=UPDATE_INTERVAL_MS_WEB),
+    dcc.Interval(id='web-update-interval', interval=UPDATE_INTERVAL_MS_WEB),
     
     html.Div([
         html.Label("Valuta: ", style={'color': '#fff'}),
-        dcc.RadioItems(id='curr', options=[{'label':'EUR','value':'EUR'}, {'label':'SEK','value':'SEK'}], value='EUR', style={'color': '#fff', 'display': 'inline-block'})
+        dcc.RadioItems(id='currency-selector', options=[{'label':'EUR','value':'EUR'}, {'label':'SEK','value':'SEK'}], value='EUR', style={'color': '#fff', 'display': 'inline-block'})
     ], style={'text-align': 'center', 'padding': '10px'}),
     
     html.Div([
-        dcc.Dropdown(id='pair', options=[{'label': k, 'value': v} for k,v in CRYPTO_PAIRS.items()], value=CRYPTO_PAIRS[DEFAULT_PAIR_KEY], style={'width':'300px', 'margin':'0 auto'})
+        dcc.Dropdown(id='crypto-pair-dropdown', options=[{'label': k, 'value': v} for k,v in CRYPTO_PAIRS.items()], value=CRYPTO_PAIRS[DEFAULT_PAIR_KEY], style={'width':'300px', 'margin':'0 auto'})
     ]),
     
-    html.Div(id='kpi-box', style={'text-align':'center', 'color':'#fff', 'margin':'20px', 'font-size':'20px'}),
-    dcc.Graph(id='graph'),
-    html.Div(id='table', style={'margin':'20px'})
+    html.Div(id='selected-pair-kpis', style={'text-align':'center', 'color':'#fff', 'margin':'20px', 'font-size':'20px'}),
+    dcc.Graph(id='live-graph'),
+    html.Div(id='summary-table-container', style={'margin':'20px'})
 ], style={'background-color': '#2d3748', 'min-height': '100vh', 'padding': '20px', 'font-family': 'sans-serif'})
 
 @app.callback(
-    [Output('graph', 'figure'), Output('kpi-box', 'children')],
-    [Input('web-update', 'n_intervals'), Input('pair', 'value'), Input('curr', 'value')]
+    [Output('live-graph', 'figure'), Output('selected-pair-kpis', 'children')],
+    [Input('web-update-interval', 'n_intervals'), Input('crypto-pair-dropdown', 'value'), Input('currency-selector', 'value')]
 )
 def update_graph(n, pair, curr):
     kpi, hist, _ = load_state_from_redis()
@@ -520,7 +520,7 @@ def update_graph(n, pair, curr):
     fig.update_layout(template='plotly_dark', paper_bgcolor='#2d3748', plot_bgcolor='#2d3748', height=500, xaxis_title="Tid", yaxis_title=f"Pris ({unit})")
     return fig, txt
 
-@app.callback(Output('table', 'children'), [Input('web-update', 'n_intervals'), Input('curr', 'value')])
+@app.callback(Output('summary-table-container', 'children'), [Input('web-update-interval', 'n_intervals'), Input('currency-selector', 'value')])
 def update_table(n, curr):
     kpi, _, _ = load_state_from_redis()
     if not kpi: return html.Div("Väntar på data från Redis...", style={'color':'yellow'})

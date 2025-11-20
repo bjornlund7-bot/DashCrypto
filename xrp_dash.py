@@ -23,6 +23,7 @@ KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
+### ÄNDRING: Uppdaterade etiketter till EUR som standard ###
 # Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRPEUR',
@@ -75,20 +76,25 @@ CRYPTO_PAIRS = {
     'MYX (MYX Finance)': 'MYXEUR',
     'GNO (Gnosis)': 'GNOEUR',
 }
-DEFAULT_PAIR_KEY = 'XRP (Ripple)' # Standardval för dropdown
+DEFAULT_PAIR_KEY = 'XRP (Ripple)'
+### SLUT PÅ ÄNDRING ###
 
-# Extrahera symboler och tickers
-COINS_LABELS = list(CRYPTO_PAIRS.keys())
-# Skapar en lista med symboler: ['XRP', 'BTC', 'ETH', ...]
-COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
-# Skapar en mappning från symbol till full label: {'XRP': 'XRP (Ripple)', ...}
-SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
+# Filnamn för permanent datalagring (XLSX)
+EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
+
+# Inställningar för Dash
+UPDATE_INTERVAL_SECONDS_DATA = 60 # 60 sekunder - DATA HÄMTAS ENDAST I BAKGRUNDSTRÅDEN
+MAX_DASH_POINTS = 1440         # 24 h historik
+SUMMARY_TREND_POINTS_30M = 30    # 30 minuter
+SUMMARY_TREND_POINTS_360M = 360  # 360 minuter (6 timmar)
+OHLC_INTERVAL_MIN = 1 # Använd 5 minuters intervall för grafen
+
+
+# SMA-fönster för grafen
+SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]
 
 CURRENCIES = ['EUR', 'SEK']
 
-# Inställningar för Dash
-UPDATE_INTERVAL_SECONDS_DATA = 60 # Data hämtas i bakgrundstråd var 60:e sekund
-OHLC_INTERVAL_MIN = 5 # Använd 5 minuters intervall för grafen
 
 # --- Redis Konfiguration ---
 REDIS_URL = os.environ.get('REDIS_URL')

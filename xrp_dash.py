@@ -1612,24 +1612,27 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
 # === HUVUDFUNKTION OCH START AV APPLIKATIONEN ===
 # =========================================================================
 
-# DENNA RAD KRÄVS FÖR DEPLOYMENT MED GUNICORN
+# 1. Sätt Layouten OMEDELBART (Global nivå - Längst till vänster)
+# Detta måste ske här för att Render ska hitta layouten.
+app.layout = create_dashboard_layout()
+
+# 2. Starta Bakgrundstråden OMEDELBART (Global nivå - Längst till vänster)
+# Detta gör att datainsamlingen startar direkt när servern startar.
+# Vi kollar om tråden redan lever för att vara säkra (bra praxis).
+already_running = any(t.name == "BackgroundCollector" for t in threading.enumerate())
+if not already_running:
+    data_thread = threading.Thread(target=background_data_collector, name="BackgroundCollector", daemon=True)
+    data_thread.start()
+    print(">>> Bakgrundstråd startad <<<")
+
+# 3. Definiera Servern (Global nivå - Längst till vänster)
+# Gunicorn letar efter denna variabel.
 server = app.server
 
+# 4. Detta block körs BARA om du testar filen lokalt på din dator
 if __name__ == '__main__':
-    # OBS: Allt nedanför MÅSTE vara indenterat (indraget)
-    
-    # 1. Starta Bakgrundslogik (Datainsamling/Notiser)
-    # daemon=True säkerställer att tråden avslutas när huvudprogrammet avslutas
-    data_thread = threading.Thread(target=background_data_collector, daemon=True)
-    data_thread.start()
-
-    # 2. Skapa Dash-applikationens layout
-    app.layout = create_dashboard_layout()
-
-    # 3. Starta Dash-servern
     print("---------------------------------------------------------")
-    print(f">>> Startar Dash webbserver (port {DASH_PORT})... <<<")
+    print(f">>> Startar Dash lokalt (port {DASH_PORT})... <<<")
     print("---------------------------------------------------------")
-
-    # Använd debug=False och dev_tools_hot_reload=False
-    app.run_server(debug=False, port=DASH_PORT, host='0.0.0.0', dev_tools_hot_reload=False)
+    # Här kan debug vara False eller True beroende på behov vid lokal testning
+    app.run_server(debug=False, port=DASH_PORT, host='0.0.0.0')

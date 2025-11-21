@@ -8,7 +8,6 @@ import os
 import requests
 import json
 import logging
-# Importera SciPy och NumPy för linjär regression (trendlinjer)
 from scipy.stats import linregress 
 import numpy as np 
 from redis import from_url, exceptions
@@ -358,7 +357,7 @@ if r:
     worker_thread.start()
     logger.debug(">>> Bakgrundstråd startad och snurrar!")
 
-# --- DASH APPLIKATIONS INITIALISERING (MÅSTE VARA HÄR!) ---
+# --- DASH APPLIKATIONS INITIALISERING ---
 app = dash.Dash(__name__, external_stylesheets=[
     'https://codepen.io/chriddyp/pen/bWLwgP.css' 
 ])
@@ -473,10 +472,12 @@ app.layout = html.Div(style={
 ])
 
 
-# --- Callback för ALL LIVE-DATA (Pris, Tid, Graf) ---
+# --- Callback för ALL LIVE-DATA (Pris, Tid, Graf, Sammanfattning) ---
+# Denna callback hanterar nu ALLA outputs som triggas av intervallet.
 @app.callback(Output('current-price', 'children'),
               Output('last-updated', 'children'),
               Output('live-update-graph', 'figure'),
+              Output('crypto-summary', 'children'), # NY: Lades till här för att undvika KeyError
               [Input('interval-component', 'n_intervals'),
                Input('coin-dropdown', 'value'),
                Input('currency-dropdown', 'value')])
@@ -484,13 +485,15 @@ def update_all_live_data(n, coin_symbol, currency):
     
     data = get_data_from_redis()
     
-    # --- 1. Felhantering / Laddning ---
+    # --- 1. Felhantering / Laddning (Returnerar Laddningsmeddelanden för alla 4 Outputs) ---
     if data is None or 'EUR_SEK_RATE' not in data:
         loading_text = "Laddar data..."
         loading_time = "Väntar på data från Kraken/Redis..."
         figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar...']))
         figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
-        return loading_text, loading_time, figure
+        loading_summary = html.Div("Laddar kryptoöversikt...", style={'textAlign': 'center', 'width': '100%', 'color': '#6c757d', 'padding': '20px'})
+        
+        return loading_text, loading_time, figure, loading_summary
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
@@ -514,7 +517,6 @@ def update_all_live_data(n, coin_symbol, currency):
         price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
 
         price_text = f"{coin_label}: {price_format} {currency}"
-        # FIX: time.gmtime -> time.localtime
         updated_text = f"Senast uppdaterad (Realtime Ticker): {time.strftime('%H:%M:%S', time.localtime(timestamp))} Lokal tid (CET/CEST)"
     
     # --- 3. Uppdatera Grafen (Figure Output) ---
@@ -548,7 +550,6 @@ def update_all_live_data(n, coin_symbol, currency):
             high_24h_display = high_24h_eur
             low_24h_display = low_24h_eur
         
-        # FIX: time.gmtime -> time.localtime
         times = [time.strftime('%H:%M', time.localtime(item['time'])) for item in historical_data]
         
         # Huvudlinje: Kurs
@@ -607,7 +608,6 @@ def update_all_live_data(n, coin_symbol, currency):
         # Visar nuvarande pris om historisk data saknas
         msg = f"Laddar historisk OHLC-data (5-min intervall) för {coin_label}..."
         current_time_ts = data.get('timestamp', time.time())
-        # FIX: time.gmtime -> time.localtime
         current_time = time.strftime('%H:%M:%S', time.localtime(current_time_ts))
         
         price_display = current_price_display_currency 
@@ -633,10 +633,100 @@ def update_all_live_data(n, coin_symbol, currency):
         paper_bgcolor='white'
     )
     
-    # --- 4. Returnera alla Outputs ---
-    return price_text, updated_text, figure
+    # --- 4. Generera Sammanfattningskort (Crypto Summary) ---
+    
+    all_24h_range = data.get('ALL_24H_RANGE', {})
+    all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) 
+    summary_cards = []
+    
+    card_style = {
+        'flex': '0 1 calc(25% - 15px)', 
+        'minWidth': '200px',
+        'padding': '15px',
+        'border': '1px solid #e0e0e0',
+        'borderRadius': '8px',
+        'backgroundColor': '#ffffff',
+        'boxShadow': '0 2px 4px rgba(0, 0, 0, 0.05)',
+    }
+    
+    periods_to_show = ['30m', '1h', '3h', '6h', '24h', '7d', '30d']
+    
+    for label in COINS_LABELS:
+        coin_symbol_loop = label.split(' ')[0]
+        price_eur = data.get(f'{coin_symbol_loop}/EUR')
+        range_data = all_24h_range.get(coin_symbol_loop, {})
+        percent_data = all_percent_changes.get(coin_symbol_loop, {})
+        
+        high_24h_eur = range_data.get('high_eur')
+        low_224h_eur = range_data.get('low_eur')
+        
+        price_status_style = {'color': '#6c757d', 'fontWeight': 'normal'} 
+        
+        if price_eur is not None:
+            if currency == 'SEK':
+                current_price_loop = price_eur * eur_to_sek
+                high_24h = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
+                low_24h = low_224h_eur * eur_to_sek if low_224h_eur is not None else None
+            else:
+                current_price_loop = price_eur
+                high_24h = high_24h_eur
+                low_24h = low_224h_eur
+                
+            def format_price(p):
+                if p is None: return "N/A"
+                price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
+                return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
+            
+            def format_change(c):
+                if c is None or c == 0.0: return "N/A"
+                color = 'green' if c >= 0 else 'red'
+                sign = '+' if c >= 0 else ''
+                return html.Span(f"{sign}{c:.2f}%", style={'color': color, 'fontWeight': 'bold'})
+                
+            formatted_price = format_price(current_price_loop)
+            formatted_high = format_price(high_24h)
+            formatted_low = format_price(low_24h)
+            
+            price_text_loop = f"{formatted_price} {currency}"
+            price_status_style['color'] = '#28a745' 
+            price_status_style['fontWeight'] = 'bold'
+        else:
+            price_text_loop = "N/A"
+            formatted_high = "N/A"
+            formatted_low = "N/A"
+            price_status_style['color'] = '#dc3545' 
+            
+        
+        card_content = [
+            html.P(label, style={'margin': '0 0 5px 0', 'fontSize': '1.1em', 'fontWeight': '500', 'color': '#0056b3'}),
+            html.P(price_text_loop, style={'margin': '0 0 10px 0', 'fontSize': '1.4em'} | price_status_style),
+            
+            html.Div(style={'borderTop': '1px solid #f0f0f0', 'paddingTop': '10px', 'marginBottom': '10px'}, children=[
+                html.Small("Prisrörelse:", style={'color': '#6c757d', 'fontWeight': 'bold', 'display': 'block', 'marginBottom': '5px'}),
+                html.Table(style={'width': '100%', 'fontSize': '0.9em', 'borderCollapse': 'collapse'}, children=[
+                    html.Tbody([
+                        html.Tr(children=[
+                            html.Td(f"{period}:", style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'width': '50%'}),
+                            html.Td(format_change(percent_data.get(period)), style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'textAlign': 'right'})
+                        ]) for period in periods_to_show
+                    ])
+                ])
+            ]),
+            
+            html.Small(f"Högsta 24h: ", style={'color': '#6c757d', 'display': 'block', 'marginTop': '5px'}),
+            html.Small(f"{formatted_high} {currency}", style={'color': 'green', 'fontWeight': 'bold', 'display': 'block'}),
+            html.Small(f"Lägsta 24h: ", style={'color': '#6c757d', 'marginTop': '5px', 'display': 'block'}),
+            html.Small(f"{formatted_low} {currency}", style={'color': 'red', 'fontWeight': 'bold', 'display': 'block'}),
+        ]
+        
+        card = html.Div(style=card_style, children=card_content)
+        summary_cards.append(card)
+
+    # --- 5. Returnera alla 4 Outputs ---
+    return price_text, updated_text, figure, summary_cards
 
 
+# --- Callback för Telegram Alert (Oberoende av Interval) ---
 @app.callback(Output('alert-output', 'children'),
               [Input('alert-button', 'n_clicks')],
               [State('alert-threshold', 'value'),
@@ -677,107 +767,6 @@ def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
             return html.Span("❌ ALERT: Kunde inte skicka Telegram-meddelande. Kontrollera loggarna.", style={'color': '#dc3545', 'fontWeight': 'bold'})
     else:
         return html.Span(f"✅ Alert satt för {coin_label} > {threshold_val} {currency}. Nuvarande pris: {current_price:.4f}.", style={'color': '#495057'})
-
-@app.callback(Output('crypto-summary', 'children'),
-              [Input('interval-component', 'n_intervals'),
-               Input('currency-dropdown', 'value')])
-def update_crypto_summary_cards(n, currency):
-    
-    data = get_data_from_redis()
-    
-    if data is None or len(data) <= 3: 
-        return html.Div("Laddar kryptoöversikt...", style={'textAlign': 'center', 'width': '100%', 'color': '#6c757d', 'padding': '20px'})
-
-    eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
-    all_24h_range = data.get('ALL_24H_RANGE', {})
-    all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) 
-    
-    summary_cards = []
-    
-    card_style = {
-        'flex': '0 1 calc(25% - 15px)', 
-        'minWidth': '200px',
-        'padding': '15px',
-        'border': '1px solid #e0e0e0',
-        'borderRadius': '8px',
-        'backgroundColor': '#ffffff',
-        'boxShadow': '0 2px 4px rgba(0, 0, 0, 0.05)',
-    }
-    
-    periods_to_show = ['30m', '1h', '3h', '6h', '24h', '7d', '30d']
-    
-    for label in COINS_LABELS:
-        coin_symbol = label.split(' ')[0]
-        price_eur = data.get(f'{coin_symbol}/EUR')
-        range_data = all_24h_range.get(coin_symbol, {})
-        percent_data = all_percent_changes.get(coin_symbol, {})
-        
-        high_24h_eur = range_data.get('high_eur')
-        low_224h_eur = range_data.get('low_eur')
-        
-        price_status_style = {'color': '#6c757d', 'fontWeight': 'normal'} 
-        
-        if price_eur is not None:
-            if currency == 'SEK':
-                current_price = price_eur * eur_to_sek
-                high_24h = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
-                low_24h = low_224h_eur * eur_to_sek if low_224h_eur is not None else None
-            else:
-                current_price = price_eur
-                high_24h = high_24h_eur
-                low_24h = low_224h_eur
-                
-            def format_price(p):
-                if p is None: return "N/A"
-                price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
-                return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
-            
-            def format_change(c):
-                if c is None or c == 0.0: return "N/A"
-                color = 'green' if c >= 0 else 'red'
-                sign = '+' if c >= 0 else ''
-                return html.Span(f"{sign}{c:.2f}%", style={'color': color, 'fontWeight': 'bold'})
-                
-            formatted_price = format_price(current_price)
-            formatted_high = format_price(high_24h)
-            formatted_low = format_price(low_24h)
-            
-            price_text = f"{formatted_price} {currency}"
-            price_status_style['color'] = '#28a745' 
-            price_status_style['fontWeight'] = 'bold'
-        else:
-            price_text = "N/A"
-            formatted_high = "N/A"
-            formatted_low = "N/A"
-            price_status_style['color'] = '#dc3545' 
-            
-        
-        card_content = [
-            html.P(label, style={'margin': '0 0 5px 0', 'fontSize': '1.1em', 'fontWeight': '500', 'color': '#0056b3'}),
-            html.P(price_text, style={'margin': '0 0 10px 0', 'fontSize': '1.4em'} | price_status_style),
-            
-            html.Div(style={'borderTop': '1px solid #f0f0f0', 'paddingTop': '10px', 'marginBottom': '10px'}, children=[
-                html.Small("Prisrörelse:", style={'color': '#6c757d', 'fontWeight': 'bold', 'display': 'block', 'marginBottom': '5px'}),
-                html.Table(style={'width': '100%', 'fontSize': '0.9em', 'borderCollapse': 'collapse'}, children=[
-                    html.Tbody([
-                        html.Tr(children=[
-                            html.Td(f"{period}:", style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'width': '50%'}),
-                            html.Td(format_change(percent_data.get(period)), style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'textAlign': 'right'})
-                        ]) for period in periods_to_show
-                    ])
-                ])
-            ]),
-            
-            html.Small(f"Högsta 24h: ", style={'color': '#6c757d', 'display': 'block', 'marginTop': '5px'}),
-            html.Small(f"{formatted_high} {currency}", style={'color': 'green', 'fontWeight': 'bold', 'display': 'block'}),
-            html.Small(f"Lägsta 24h: ", style={'color': '#6c757d', 'marginTop': '5px', 'display': 'block'}),
-            html.Small(f"{formatted_low} {currency}", style={'color': 'red', 'fontWeight': 'bold', 'display': 'block'}),
-        ]
-        
-        card = html.Div(style=card_style, children=card_content)
-        summary_cards.append(card)
-
-    return summary_cards
 
 
 if __name__ == '__main__':

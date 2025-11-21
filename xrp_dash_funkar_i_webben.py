@@ -1,3 +1,4 @@
+# ... (Importer och konstanter oförändrade) ...
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
@@ -10,28 +11,20 @@ import json
 import logging
 from redis import from_url, exceptions
 
-# --- Konfiguration och Initialisering ---
+# [LOGGING OCH KONSTANTER OFÖRÄNDRADE]
 
 logging.basicConfig(level=logging.DEBUG, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
-# =========================================================================
-# === TELEGRAM Konfiguration (Hämta från Render Miljövariabler) ===
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    logger.warning("❌ TELEGRAM-inställningar saknas. Alerts kommer inte att fungera.")
-# =========================================================================
-
-# --- API Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
+# [CRYPTO_PAIRS, ETC OFÖRÄNDRADE]
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR', 
     'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR', 
@@ -51,34 +44,29 @@ CRYPTO_PAIRS = {
     'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR', 
     'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
 }
-
 DEFAULT_PAIR_KEY = 'XRP (Ripple)' 
 STANDARD_TICKER = CRYPTO_PAIRS[DEFAULT_PAIR_KEY] 
-
-# Extrahera symboler och tickers
 COINS_LABELS = list(CRYPTO_PAIRS.keys())
 COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
 SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
-
 CURRENCIES = ['EUR', 'SEK']
-
-# Inställningar för Dash
 UPDATE_INTERVAL_SECONDS_DATA = 60 
-OHLC_CACHE_INTERVAL_MIN = 5 # 5 minuters intervall stöds av Kraken.
+OHLC_CACHE_INTERVAL_MIN = 5 
 
-# Beräkningskonstanter för procentrörelse (i 5-minuters block)
+# Beräkningskonstanter för procentrörelse
 TIME_WINDOWS = {
-    '30m': 6,  # 30 minuter / 5 min/block = 6 block
-    '1h': 12,   # 1 timme / 5 min/block = 12 block
-    '3h': 36,   # 3 timmar / 5 min/block = 36 block
-    '6h': 72,   # 6 timmar / 5 min/block = 72 block
-    '24h': 288, # 24 timmar / 5 min/block = 288 block
+    '30m': {'blocks': 6, 'interval': OHLC_CACHE_INTERVAL_MIN},  # 30 min / 5 min = 6 block
+    '1h': {'blocks': 12, 'interval': OHLC_CACHE_INTERVAL_MIN},  # 1 h / 5 min = 12 block
+    '3h': {'blocks': 36, 'interval': OHLC_CACHE_INTERVAL_MIN},  # 3 h / 5 min = 36 block
+    '6h': {'blocks': 72, 'interval': OHLC_CACHE_INTERVAL_MIN},  # 6 h / 5 min = 72 block
+    '24h': {'blocks': 288, 'interval': OHLC_CACHE_INTERVAL_MIN},# 24 h / 5 min = 288 block
+    '7d': {'blocks': 7, 'interval': 1440},  # 7 dagar / 1 dag = 7 block (Nytt 1-dags anrop)
+    '30d': {'blocks': 30, 'interval': 1440}, # 30 dagar / 1 dag = 30 block (Nytt 1-dags anrop)
 }
 
-
-# --- Redis Konfiguration ---
+# [REDIS KONFIGURATION OCH DEFAULT DATA OFÖRÄNDRADE]
 REDIS_URL = os.environ.get('REDIS_URL')
-
+r = None
 if REDIS_URL:
     try:
         r = from_url(REDIS_URL)
@@ -90,18 +78,15 @@ if REDIS_URL:
 else:
     logger.warning("REDIS_URL hittades inte. Appen kommer inte att cache:a data.")
     r = None
-
-# Fallback/Standarddata 
 DEFAULT_DATA = {
     'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
     'timestamp': time.time(),
     'EUR_SEK_RATE': 11.0, 
     'ALL_24H_RANGE': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}},
-    'ALL_PERCENT_CHANGE': {} # Ny nyckel för procentrörelser
+    'ALL_PERCENT_CHANGE': {}
 }
 
-# --- Telegram Utskick Funktion (Oförändrad) ---
-
+# [TELEGRAM, EXCHANGE RATE, TICKER DATA FUNKTIONER OFÖRÄNDRADE]
 def send_telegram_alert(coin_label, price, currency, threshold):
     # [KOD FÖR TELEGRAM ALERT]
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -134,7 +119,6 @@ def send_telegram_alert(coin_label, price, currency, threshold):
         logger.error(f"❌ Fel vid utskick till Telegram: {e}. Svar: {response.text if 'response' in locals() else 'Inget svar'}")
         return False
 
-# --- API Data Hämtning Funktioner (Oförändrade) ---
 def fetch_exchange_rate():
     # [KOD FÖR EXCHANGE RATE]
     try:
@@ -202,14 +186,16 @@ def fetch_crypto_data():
         logger.error(f"❌ Oväntat fel i Ticker-hantering: {e}")
         return DEFAULT_DATA
 
-def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
-    # [KOD FÖR OHLC DATA MED SINCE=24H]
-    time_24h_ago = int(time.time()) - 86400 
+# --- UPPDATERAD GENERELL OHLC FUNKTION ---
+def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
+    """Hämtar OHLC-data från Kraken. periods_ago_seconds bestämmer hur långt tillbaka 'since' ska gå."""
+    
+    time_ago = int(time.time()) - periods_ago_seconds 
     
     params = {
         'pair': kraken_ticker, 
-        'interval': interval,
-        'since': time_24h_ago
+        'interval': interval, # T.ex. 5 min (300) eller 1 dag (1440)
+        'since': time_ago # Begär data sedan X sekunder tillbaka
     }
         
     try:
@@ -224,6 +210,7 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
         result_key = next(iter(ohlc_data['result'])) 
         data_list = ohlc_data['result'][result_key]
         
+        # Returnerar tid och slutpris för grafen
         return [{'time': int(row[0]), 'price': float(row[4])} for row in data_list]
 
     except requests.exceptions.RequestException as e:
@@ -233,25 +220,25 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
         logger.error(f"Unexpected error processing OHLC data: {e}")
         return []
 
-# --- NY FUNKTION: Beräkna Procentrörelse ---
 
-def calculate_percentage_changes(ohlc_data, current_price):
+# --- NY FUNKTION: Beräkna Procentrörelse ---
+def calculate_percentage_changes(ohlc_data, current_price, periods):
     """Beräknar procentuell förändring baserat på historisk OHLC-data."""
     
     changes = {}
     
-    # Historisk data måste vara sorterad i tid (ASC)
-    if not ohlc_data:
-        return {key: 0.0 for key in TIME_WINDOWS}
+    if not ohlc_data or current_price is None or current_price == 0:
+        return {key: 0.0 for key in periods}
 
-    # Den äldsta datan ligger i början av listan (index 0) om den kommer från Kraken med 'since'
-    
-    # Hämta referenspriser baserat på antalet 5-minuters block
-    for period, blocks in TIME_WINDOWS.items():
+    # Hämta referenspriser baserat på antalet block
+    for period, config in periods.items():
         
-        # Säkerställ att vi har tillräckligt med data för perioden + nuvarande pris
+        blocks = config['blocks']
+        
+        # För OHLC (Open, High, Low, Close) där index 0 är den äldsta datan:
+        # Om vi vill ha 30 dagar tillbaka, behöver vi ha minst 30 datapunkter.
         if len(ohlc_data) >= blocks:
-            # Hämta priset vid referenspunkten (t.ex. 6 block bakåt för 30m)
+            # Vi tittar på priset *vid* referenspunkten (t.ex. 30 block/dagar tillbaka)
             reference_price = ohlc_data[-blocks]['price']
             
             if reference_price and reference_price > 0:
@@ -260,7 +247,6 @@ def calculate_percentage_changes(ohlc_data, current_price):
             else:
                 changes[period] = 0.0
         else:
-            # Om datan är nyare än t.ex. 6h (72 block) kan vi inte beräkna 24h
             changes[period] = 0.0 
             
     return changes
@@ -268,8 +254,7 @@ def calculate_percentage_changes(ohlc_data, current_price):
 # --- Bakgrundstrådens Logik (Fullständig Cache) ---
 
 def update_redis_cache(redis_instance):
-    """Loop som körs i bakgrunden för att uppdatera ALL data i Redis-cachen, 
-       inklusive 5-min OHLC-historik och procentrörelser för ALLA mynt."""
+    """Loop som körs i bakgrunden för att uppdatera ALL data i Redis-cachen."""
     
     UPDATE_CYCLE_SECONDS = 120 
     
@@ -282,42 +267,54 @@ def update_redis_cache(redis_instance):
             # 1. Hämta realtidsdata (Nuvarande Pris & 24H High/Low)
             new_data = fetch_crypto_data()
             
-            # Initiera procent-dict för lagring
             all_percent_changes = {} 
-            
-            ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
             
             for label, ticker in CRYPTO_PAIRS.items():
                 coin_symbol = label.split(' ')[0]
-                
-                # Hämta aktuellt pris i EUR
                 current_price_eur = new_data.get(f'{coin_symbol}/EUR')
                 
-                # 2. Hämta OHLC-data (5 minuter)
-                ohlc_data = fetch_ohlc_data_from_kraken(ticker, interval=ohlc_interval) 
+                if current_price_eur is None:
+                    time.sleep(1) # Liten paus om priset saknas
+                    continue
                 
-                if ohlc_data and current_price_eur:
-                    
-                    # Beräkna procentrörelser baserat på 5-minuters datan
-                    percent_changes = calculate_percentage_changes(ohlc_data, current_price_eur)
-                    all_percent_changes[coin_symbol] = percent_changes
-                    
-                    # Lagra OHLC i Redis
-                    ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{ticker}' 
-                    redis_instance.set(ohlc_cache_key, json.dumps(ohlc_data), ex=7200) 
-                    logger.debug(f"   >>> OHLC {ohlc_interval}-min sparad i cache för {ticker}")
+                # --- A. Hämta 5-min OHLC (för graf & korta rörelser: 30m - 24h) ---
+                # Begär 24 timmar bakåt (24 * 60 * 60 = 86400 sekunder)
+                periods_ago_24h = 86400 
+                ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
-                # Pausa 2 sekunder
+                # Beräkna korta procentrörelser (baserade på 5-min data)
+                short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
+                percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
+                
+                if ohlc_5min_data:
+                    ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}' 
+                    redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
+                    logger.debug(f"   >>> OHLC 5-min sparad i cache för {ticker}")
+                    
+                # --- B. Hämta 1-dag OHLC (för långa rörelser: 7d, 30d) ---
+                # Begär 30 dagar bakåt (30 * 24 * 60 * 60 = 2592000 sekunder)
+                periods_ago_30d = 2592000 
+                ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) # 1440 min = 1 dag
+                
+                # Beräkna långa procentrörelser (baserade på 1-dag data)
+                long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
+                long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
+                
+                # Slå ihop korta och långa rörelser
+                percent_changes.update(long_term_changes)
+                all_percent_changes[coin_symbol] = percent_changes
+                
+                # Pausa 2 sekunder för att respektera API rate limits.
                 time.sleep(2) 
             
-            # 3. Uppdatera Ticker-data med procentrörelser
+            # 3. Uppdatera Ticker-data med procentrörelser och spara i Redis
             new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
             
             if redis_instance:
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 5)
+                logger.debug("✅ Hela 'crypto_data' inklusive procentrörelser sparad i Redis.")
             
-            # --- Cykel avslutad ---
-            
+            # [PAUS KOD OFÖRÄNDRAD]
             cycle_duration = time.time() - cycle_start_time
             logger.debug(f"✅ Fullständig cache-cykel slutförd på {cycle_duration:.2f} sekunder.")
             
@@ -339,12 +336,13 @@ if r:
     logger.debug(">>> Bakgrundstråd startad och snurrar!")
 
 # --- Dash Applikation och Layout (oförändrad) ---
+
 app = dash.Dash(__name__, external_stylesheets=[
     'https://codepen.io/chriddyp/pen/bWLwgP.css' 
 ])
 server = app.server
-# [LAYOUT KOD OFÖRÄNDRAD]
 
+# [LAYOUT KOD OFÖRÄNDRAD]
 app.layout = html.Div(style={
     'backgroundColor': '#f8f9fa', 
     'minHeight': '100vh', 
@@ -454,7 +452,6 @@ app.layout = html.Div(style={
 
 
 # --- Hämta data från Redis (Oförändrad) ---
-
 def get_data_from_redis():
     # [KOD FÖR HÄMTA FRÅN REDIS]
     if r:
@@ -471,7 +468,6 @@ def get_data_from_redis():
     return None
 
 # --- Callback för Pris och Graf (Oförändrad) ---
-
 @app.callback(Output('current-price', 'children'),
               Output('last-updated', 'children'),
               Output('live-update-graph', 'figure'),
@@ -608,7 +604,7 @@ def update_metrics_and_graph(n, coin_symbol, currency):
     return price_text, updated_text, figure
 
 
-# --- Callback för Telegram Alert (Oförändrad) ---
+# [TELEGRAM ALERT CALLBACK OFÖRÄNDRAD]
 @app.callback(Output('alert-output', 'children'),
               [Input('alert-button', 'n_clicks')],
               [State('alert-threshold', 'value'),
@@ -650,8 +646,7 @@ def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
     else:
         return html.Span(f"✅ Alert satt för {coin_label} > {threshold_val} {currency}. Nuvarande pris: {current_price:.4f}.", style={'color': '#495057'})
 
-# --- Callback för Krypto Sammanfattning (MED Procentrörelse) ---
-
+# --- Callback för Krypto Sammanfattning (MED Procentrörelse, UPPDATERAD) ---
 @app.callback(Output('crypto-summary', 'children'),
               [Input('interval-component', 'n_intervals'),
                Input('currency-dropdown', 'value')])
@@ -664,7 +659,7 @@ def update_crypto_summary_cards(n, currency):
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
     all_24h_range = data.get('ALL_24H_RANGE', {})
-    all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) # Hämta de beräknade procentrörelserna
+    all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) 
     
     summary_cards = []
     
@@ -678,14 +673,14 @@ def update_crypto_summary_cards(n, currency):
         'boxShadow': '0 2px 4px rgba(0, 0, 0, 0.05)',
     }
     
-    # Lista över de perioder vi vill visa, i rätt ordning
-    periods_to_show = ['30m', '1h', '3h', '6h', '24h']
+    # Lista över de perioder vi vill visa, i rätt ordning (Nu inkl 7d, 30d)
+    periods_to_show = ['30m', '1h', '3h', '6h', '24h', '7d', '30d']
     
     for label in COINS_LABELS:
         coin_symbol = label.split(' ')[0]
         price_eur = data.get(f'{coin_symbol}/EUR')
         range_data = all_24h_range.get(coin_symbol, {})
-        percent_data = all_percent_changes.get(coin_symbol, {}) # Hämta procentdata för myntet
+        percent_data = all_percent_changes.get(coin_symbol, {})
         
         high_24h_eur = range_data.get('high_eur')
         low_224h_eur = range_data.get('low_eur')
@@ -710,7 +705,8 @@ def update_crypto_summary_cards(n, currency):
                 return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
             
             def format_change(c):
-                if c is None: return "N/A"
+                # Använd N/A om c är 0.0 (vilket indikerar att data saknades för perioden)
+                if c is None or c == 0.0: return "N/A"
                 color = 'green' if c >= 0 else 'red'
                 sign = '+' if c >= 0 else ''
                 return html.Span(f"{sign}{c:.2f}%", style={'color': color, 'fontWeight': 'bold'})

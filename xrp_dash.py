@@ -878,6 +878,8 @@ import itertools
 
 
 
+UPDATE_INTERVAL_SECONDS_DATA = 60 # Sätter ett standardvärde för att undvika fel
+
 def background_data_collector():
     """
     DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
@@ -901,6 +903,11 @@ def background_data_collector():
     if initial_data_fetch:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
         for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+            
+            # --- NY DIAGNOSTISK LOGG ---
+            print(f"🟢 Försöker hämta Ticker för {pair_key} ({pair_ticker})...") # <-- NY RAD
+            # --------------------------
+            
             ticker_data, error = get_crypto_data(pair_ticker)
             
             # --- Initial Datainsamling: FELHANTERING ---
@@ -957,7 +964,7 @@ def background_data_collector():
                     print(f"🔴 [FEL Ticker] {pair_key}: {error}") # <-- BEHÅLLS
                     continue # Hoppa till nästa par om fel uppstår
                 
-                # Debug: print(f"🟢 [OK] Hämtade Ticker data för {pair_ticker}") # <-- NY DEBUG LOGG BEHÅLLS
+                # Debug: print(f"🟢 [OK] Hämtade Ticker data för {pair_ticker}") # <-- BEHÅLLS
 
                 current_price_sek = ticker_data['price_sek']
                 
@@ -1002,14 +1009,9 @@ def background_data_collector():
             # --- SLUT PÅ LÅST BLOCK ---
             
         # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
-        # Detta var troligen den saknade delen som gjorde att tråden kraschade/försvann tyst.
-        time.sleep(60) # <-- KRITISK KORRIGERING
-
-# Obs: time.sleep(60) är inte definierad här, se till att du har 'import time' överst i din fil.        
-        # Vänta 60 sekunder utanför låset
-        time.sleep(60) # Glöm inte time.sleep(60) i slutet av while-loopen! # <-- Kanske saknas?        
-        # SERVER-STYRD VÄNTETID
-        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)        
+        # Jag standardiserar till UPDATE_INTERVAL_SECONDS_DATA för att vara konsekvent.
+        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
+    
 # =========================================================================
 # === DASH KOMPONENTER OCH LAYOUT ===
 # =========================================================================

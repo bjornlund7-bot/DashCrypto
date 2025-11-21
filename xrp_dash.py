@@ -24,6 +24,8 @@ from dash import html
 import plotly.graph_objects as go
 
 
+df_current_data = pd.DataFrame(columns=['col1', 'col2', 'col3']) # Ersätt med dina faktiska kolumner
+
 # --- Globala inställningar och API-URL:er ---
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -62,7 +64,31 @@ SENT_SPIKE_NOTIFICATIONS = {}
 LAST_SUMMARY_SENT = datetime.min # För periodisk sammanfattning
 
 # --- Dash app initialization ---
+import dash # Säkerställ att dash är importerad om den inte fanns i blocket innan
 app = dash.Dash(__name__)
+
+# =========================================================================
+# === NYTT BLOCK: Säkerhets- och Prestandaförbättringar (Fixar headers) ===
+# =========================================================================
+
+# 1. Sätter default maxålder för statiska filer (t.ex. 1 vecka)
+# Fixar "A 'cache-control' header is missing or empty."
+app.server.send_file_max_age_default = 60 * 60 * 24 * 7 # En vecka i sekunder
+
+# 2. Lägger till säkerhetsrubriker till alla svar
+# Fixar "Response should include 'x-content-type-options' header."
+@app.server.after_request
+def add_security_headers(response):
+    # Förhindrar MIME-sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Sätter Content-Type charset till UTF-8 explicit om det saknas (Fixar charset-varningen)
+    if 'content-type' in response.headers and 'charset' not in response.headers['content-type'].lower():
+        response.headers['Content-Type'] += '; charset=utf-8'
+        
+    return response
+
+# =========================================================================
 
 # --- Hjälpfunktioner för formatering ---
 def format_price_eur(price):
@@ -89,7 +115,6 @@ def log_data_to_excel(): pass # Dummy-funktion
 # =========================================================================
 # === START PÅ DIN URSPRUNGLIGA DEL 2 ===
 # =========================================================================
-
 @lru_cache(maxsize=1)
 def get_eur_sek_rate():
     """Hämtar aktuell EUR/SEK växelkurs. Använder 11.50 SEK som fallback."""
@@ -755,6 +780,14 @@ def background_data_collector():
         time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
 
 
+# Följande funktion MÅSTE definieras globalt eftersom den används i callbacken
+def calculate_sma(df, window, price_key):
+    """Beräknar Simple Moving Average (SMA)."""
+    # Se till att denna funktion finns i din fullständiga kodfil.
+    # Jag inkluderar en placeholder här om den saknas.
+    return df[price_key].rolling(window=window, min_periods=1).mean()
+
+
 # --- DASH CALLBACKS (Interaktion och Uppdatering) ---
 
 # Callback för att uppdatera klockslag och simulera en data-refresh för webben
@@ -1052,7 +1085,8 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
     }
     
     for window, details in sma_data.items():
-        df[f'SMA_{window}'] = calculate_sma(df, window, price_key) # Använd rätt price_key
+        # calculate_sma MÅSTE vara definierad globalt
+        df[f'SMA_{window}'] = calculate_sma(df, window, price_key) 
     
     pair_key = next((key for key, value in CRYPTO_PAIRS.items() if value == selected_ticker), selected_ticker)
     
@@ -1170,6 +1204,45 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
     return fig
 ### SLUT PÅ ÄNDRING ###
 
+# =========================================================================
+# === NY FUNKTION: Bakgrundsinsamlare med Kritisk Felhantering ===
+# =========================================================================
+import traceback
+
+def background_data_collector():
+    """
+    Körs i en separat tråd för att kontinuerligt hämta data och bearbeta KPI:er.
+    Inkluderar robust felhantering för att logga eventuella krascher till Render-loggen.
+    """
+    print("---------------------------------------------------------")
+    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
+    print("---------------------------------------------------------")
+
+    # --- Initial datainsamling ---
+    print("[07:49:25] Initial datainsamling påbörjad...")
+    try:
+        # Denna funktion måste vara definierad i din kod och anropa Kraken/bearbeta data
+        collect_and_process_data() 
+        print(f"🟢 [UPPSTART OK] Initial datainhämtning slutförd.")
+    except Exception as e:
+        # KRITISK LOGGING: Fånga uppstartfel
+        print(f"🔴 [KRITISKT FEL] Initial datahämtning misslyckades: {e}")
+        traceback.print_exc()
+        return # Avslutar tråden om uppstart misslyckas
+
+    # --- Periodisk datahämtning ---
+    while True:
+        try:
+            time.sleep(60) # Vänta 60 sekunder
+            print("--- Datauppdatering startad ---") # Logg för att bekräfta att loopen körs
+            collect_and_process_data()
+            print("🟢 [OK] Datauppdatering slutförd för alla par...")
+        except Exception as e:
+            # KRITISK LOGGING: Fånga periodiska fel
+            print(f"🔴 [KRITISKT FEL] Periodisk datahämtning misslyckades: {e}")
+            traceback.print_exc()
+            time.sleep(300) # Vänta 5 minuter vid fel innan nytt försök
+
 
 # =========================================================================
 # === HUVUDFUNKTION OCH START AV APPLIKATIONEN ===
@@ -1181,7 +1254,8 @@ app.layout = create_dashboard_layout()
 # 2. Starta Bakgrundstråden OMEDELBART
 already_running = any(t.name == "BackgroundCollector" for t in threading.enumerate())
 if not already_running:
-    data_thread = threading.Thread(target=background_data_collector, name="BackgroundCollector", daemon=True)
+    # Använd den nya funktionen med felhantering
+    data_thread = threading.Thread(target=background_data_collector, name="BackgroundCollector", daemon=True) 
     data_thread.start()
     print(">>> Bakgrundstråd startad <<<")
 
@@ -1190,8 +1264,8 @@ server = app.server
 
 # 4. Detta block körs BARA om du testar filen lokalt på din dator
 if __name__ == '__main__':
+    # ... [din existerande __main__ logik] ...
     print("---------------------------------------------------------")
     print(f">>> Startar Dash lokalt (port {DASH_PORT})... <<<")
     print("---------------------------------------------------------")
-    # debug=False rekommenderas vid trådanvändning för att undvika dubbla trådstartar
     app.run_server(debug=False, port=DASH_PORT, host='0.0.0.0')

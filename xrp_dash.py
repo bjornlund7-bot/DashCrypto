@@ -172,8 +172,8 @@ def background_data_collector():
                 # 2. Uppdatera lokal historik (Deque)
                 data_history[pair_ticker].append({
                     'time': current_time, 
-                    'price_sek': ticker_data['price_sek'],
-                    'price_eur': ticker_data['price_eur']
+                    'price_sek': ticker_price_sek,
+                    'price_eur': ticker_price_eur
                 })
                 local_history_list = list(data_history[pair_ticker]) 
 
@@ -182,18 +182,29 @@ def background_data_collector():
                 price_30d_eur, price_30d_sek = cached_kpi.get('price_30d_eur'), cached_kpi.get('price_30d_sek')
                 
                 if is_ohlc_update_time:
-                    p7e, p7s, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
-                    if not error_7d:
-                        price_7d_eur, price_7d_sek = p7e, p7s
-                    else:
-                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}")
+                    # --- 7 DAGAR ---
+                    # KORRIGERING: Fånga endast 2 returvärden (df_eur, df_sek)
+                    df_7d_eur, df_7d_sek = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
                     
-                    p30e, p30s, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
-                    if not error_30d:
-                        price_30d_eur, price_30d_sek = p30e, p30s
+                    if df_7d_eur is not None:
+                        # Ta det ÄLDSTA stängningspriset från DataFrame (index 0)
+                        price_7d_eur = df_7d_eur['close'].iloc[0]
+                        price_7d_sek = df_7d_sek['close'].iloc[0]
                     else:
-                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}")
-
+                        # Loggmeddelande kommer redan från get_ohlc_price
+                        print(f"⚠️ [VARNING OHLC 7d] {pair_key}: Misslyckades hämta 7d data. Använder tidigare cachat värde.")
+                    
+                    # --- 30 DAGAR ---
+                    # KORRIGERING: Fånga endast 2 returvärden (df_eur, df_sek)
+                    df_30d_eur, df_30d_sek = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
+                    
+                    if df_30d_eur is not None:
+                        # Ta det ÄLDSTA stängningspriset från DataFrame (index 0)
+                        price_30d_eur = df_30d_eur['close'].iloc[0]
+                        price_30d_sek = df_30d_sek['close'].iloc[0]
+                    else:
+                        # Loggmeddelande kommer redan från get_ohlc_price
+                        print(f"⚠️ [VARNING OHLC 30d] {pair_key}: Misslyckades hämta 30d data. Använder tidigare cachat värde.")
 
                 # 4. Beräkna trend-KPI:er
                 trend_30m_percent, trend_30m_text, trend_30m_color = calculate_30min_trend(pair_ticker, local_history_list)
@@ -256,7 +267,6 @@ def background_data_collector():
             
         # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
         time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
-
 
 
 # =========================================================================

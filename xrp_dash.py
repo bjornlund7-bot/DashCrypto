@@ -860,15 +860,15 @@ def background_data_collector():
 
 # ... inne i for-loopen ...
             # 1. Hämta Ticker-data
-            ticker_data, error = get_crypto_data(pair_ticker)
+    ticker_data, error = get_crypto_data(pair_ticker)
 
-            if error:
-                # SE TILL ATT DETTA SYNS I LOGGEN:
-                print(f"🔴 [FEL] Kunde inte hämta data för {pair_ticker}: {error}")
-                continue
-            else:
-                # BEKRÄFTELSE PÅ ATT VI FICK DATA:
-                print(f"🟢 [OK] Hämtade data för {pair_ticker}: {ticker_data['price_eur']}")
+    if error:
+    # SE TILL ATT DETTA SYNS I LOGGEN:
+        print(f"🔴 [FEL] Kunde inte hämta data för {pair_ticker}: {error}")
+        continue
+    else:
+    # BEKRÄFTELSE PÅ ATT VI FICK DATA:
+        print(f"🟢 [OK] Hämtade data för {pair_ticker}: {ticker_data['price_eur']}")
 
 
 

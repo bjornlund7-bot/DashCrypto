@@ -848,6 +848,8 @@ import itertools
 # (Antar att alla globala variabler och hjälpfunktioner från Del 1 finns här)
 
 
+
+
 def background_data_collector():
     """
     DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
@@ -857,20 +859,6 @@ def background_data_collector():
     
     # Lokal räknare för OHLC/Excel-loggning
     local_interval_counter = 0
-
-# ... inne i for-loopen ...
-            # 1. Hämta Ticker-data
-    ticker_data, error = get_crypto_data(pair_ticker)
-
-    if error:
-    # SE TILL ATT DETTA SYNS I LOGGEN:
-        print(f"🔴 [FEL] Kunde inte hämta data för {pair_ticker}: {error}")
-        continue
-    else:
-    # BEKRÄFTELSE PÅ ATT VI FICK DATA:
-        print(f"🟢 [OK] Hämtade data för {pair_ticker}: {ticker_data['price_eur']}")
-
-
 
     print("---------------------------------------------------------")
     print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
@@ -885,13 +873,11 @@ def background_data_collector():
     if initial_data_fetch:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
         for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-            ### ÄNDRING: Hämta båda valutorna ###
             ticker_data, error = get_crypto_data(pair_ticker)
             if ticker_data:
                 with data_lock:
                     global_kpi_cache[pair_ticker] = {
                         **ticker_data,
-                        # Sätt initiala 7d/30d-priser för båda valutorna
                         'price_7d_eur': ticker_data['price_eur'],
                         'price_30d_eur': ticker_data['price_eur'],
                         'price_7d_sek': ticker_data['price_sek'],
@@ -903,14 +889,11 @@ def background_data_collector():
                         'signal_text': 'Väntar på historik',
                         'signal_color': '#555555',
                     }
-                    # Lägg till en första datapunkt för båda valutorna
                     data_history[pair_ticker].append({
                         'time': datetime.now(), 
                         'price_sek': ticker_data['price_sek'],
                         'price_eur': ticker_data['price_eur']
                     })
-            ### SLUT PÅ ÄNDRING ###
-
 
     while True:
         
@@ -924,23 +907,22 @@ def background_data_collector():
             new_ratings = {}
             print(f"\n--- Datauppdatering startad: {current_time.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-            # Temporär cache för OHLC-data som kan ta tid att hämta
-            ohlc_cache = {} 
-            # Använd en smartare kontroll: kör OHLC-hämtningen var 60:e datapunkt.
+            local_interval_counter += 1
             is_ohlc_update_time = local_interval_counter % 60 == 0
 
             # Första loop: Hämta Ticker-data, uppdatera historik, hämta OHLC
             for pair_key, pair_ticker in CRYPTO_PAIRS.items():
                 
-                ### ÄNDRING: Hämta data för båda valutorna ###
                 # 1. Hämta Ticker-data
                 ticker_data, error = get_crypto_data(pair_ticker)
 
                 if error:
-                    print(f"[{pair_key}] FEL vid Ticker-data: {error}")
-                    continue
+                    print(f"🔴 [FEL] {pair_key}: {error}")
+                    continue # Hoppa till nästa par om fel uppstår
+                
+                # Debug: print(f"🟢 [OK] Hämtade data för {pair_ticker}")
 
-                current_price_sek = ticker_data['price_sek'] # För notiser
+                current_price_sek = ticker_data['price_sek']
                 
                 # 2. Uppdatera lokal historik (Deque)
                 data_history[pair_ticker].append({
@@ -948,7 +930,7 @@ def background_data_collector():
                     'price_sek': ticker_data['price_sek'],
                     'price_eur': ticker_data['price_eur']
                 })
-                local_history_list = list(data_history[pair_ticker]) # Uppdaterad lista för beräkningar nedan
+                local_history_list = list(data_history[pair_ticker]) 
 
                 # 3. Hämta OHLC-data (Endast vid uppdatering)
                 price_7d_eur, price_7d_sek = None, None
@@ -959,31 +941,26 @@ def background_data_collector():
                 if is_ohlc_update_time:
                     price_7d_eur, price_7d_sek, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
                     if error_7d:
-                             print(f"[{pair_key}] Varning vid 7d OHLC: {error_7d}")
+                        print(f"[{pair_key}] Varning vid 7d OHLC: {error_7d}")
                     
                     price_30d_eur, price_30d_sek, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
                     if error_30d:
-                             print(f"[{pair_key}] Varning vid 30d OHLC: {error_30d}")
+                        print(f"[{pair_key}] Varning vid 30d OHLC: {error_30d}")
                 
-                # 4. Uppdatera KPI-cache (använd gamla värden om nya OHLC saknas)
+                # 4. Uppdatera KPI-cache 
                 price_7d_ago_eur = price_7d_eur if price_7d_eur is not None else cached_kpi.get('price_7d_eur')
                 price_7d_ago_sek = price_7d_sek if price_7d_sek is not None else cached_kpi.get('price_7d_sek')
                 price_30d_ago_eur = price_30d_eur if price_30d_eur is not None else cached_kpi.get('price_30d_eur')
                 price_30d_ago_sek = price_30d_sek if price_30d_sek is not None else cached_kpi.get('price_30d_sek')
                 
-                # SÄKERSTÄLL att det finns ett startvärde (för att undvika None i MTS)
                 if price_7d_ago_sek is None: price_7d_ago_sek = current_price_sek
                 if price_30d_ago_sek is None: price_30d_ago_sek = current_price_sek
-                # (Vi behöver inte göra detta för EUR, då MTS-logiken körs på SEK)
 
-                ### SLUT PÅ ÄNDRING ###
-
-                # 5. Beräkna kortsiktiga trender och MTS-signal (BASERAT PÅ SEK)
+                # 5. Beräkna kortsiktiga trender och MTS-signal
                 trend_30m_percent, trend_30m_text, trend_30m_color = calculate_30min_trend(pair_ticker, local_history_list)
                 percent_change_100m = calculate_100min_change(local_history_list)
                 percent_change_360m = calculate_360min_change(local_history_list)
                 
-                # Komplett KPI-paket för MTS-algoritmen (SEK-BASERAD)
                 full_kpi_data_for_mts = {
                     'price': ticker_data['price_sek'],
                     'high_24h': ticker_data['high_24h_sek'],
@@ -995,14 +972,12 @@ def background_data_collector():
                 }
                 
                 signal_text, signal_rating, signal_color, percent_7d, percent_30d = generate_mts_signal(full_kpi_data_for_mts, local_history_list)
-                
-                current_price_eur = ticker_data.get('price_eur', 0.0) # Använd .get()
-
+                current_price_eur = ticker_data.get('price_eur', 0.0) 
                 new_ratings[pair_ticker] = signal_rating
                 
-                # 6. Uppdatera Global KPI Cache (Lagra ALL data, EUR, SEK, och logik)
+                # 6. Uppdatera Global KPI Cache
                 global_kpi_cache[pair_ticker] = {
-                    **ticker_data, # Innehåller alla price_eur, price_sek, high_24h_eur, etc.
+                    **ticker_data, 
                     'price_7d_eur': price_7d_ago_eur,
                     'price_7d_sek': price_7d_ago_sek,
                     'price_30d_eur': price_30d_ago_eur,
@@ -1011,126 +986,81 @@ def background_data_collector():
                     'trend_30m_percent': trend_30m_percent, 
                     'trend_30m_text': trend_30m_text,
                     'trend_30m_color': trend_30m_color,
-                    'percent_change_100m': percent_change_100m, # Från SEK-logik
-                    'percent_change_360m': percent_change_360m, # Från SEK-logik
+                    'percent_change_100m': percent_change_100m,
+                    'percent_change_360m': percent_change_360m,
                     'signal_text': signal_text,
                     'signal_rating': signal_rating,
                     'signal_color': signal_color,
-                    'percent_7d': percent_7d, # Från SEK-logik
-                    'percent_30d': percent_30d, # Från SEK-logik
+                    'percent_7d': percent_7d,
+                    'percent_30d': percent_30d,
                 }
 
-                # 7. Kontrollera och skicka TELEGRAM notiser (MTS) - Använder EUR
-                if abs(signal_rating) >= 5: # Stark köp/sälj
+                # 7. Hantera Notiser (Telegram)
+                if abs(signal_rating) >= 5: 
                     last_notified_rating = SENT_NOTIFICATIONS.get(pair_ticker, 0)
-                    
                     if (signal_rating * last_notified_rating <= 0) or (abs(signal_rating) > abs(last_notified_rating)):
                         threading.Thread(target=notify_single, args=(signal_text, pair_key, current_price_eur, signal_rating)).start()
                         SENT_NOTIFICATIONS[pair_ticker] = signal_rating
-                
-                
-                # 8. KONTROLLERA OCH SKICKA ALLA SPIKE-NOTISER (30m, 100m, 360m, 24h)
-                
-                # Hämta alla relevanta procentförändringar från den nyligen uppdaterade cachen
+                elif abs(signal_rating) < 1:
+                     SENT_NOTIFICATIONS[pair_ticker] = 0
+
+                # 8. Hantera Spike Notiser
                 kpi = global_kpi_cache[pair_ticker]
                 percent_changes = {
                     '30m': kpi.get('trend_30m_percent'),
                     '100m': kpi.get('percent_change_100m'),
                     '360m': kpi.get('percent_change_360m'),
-                    '24h': kpi.get('percent_change_24h'), # Denna är valutaneutral
+                    '24h': kpi.get('percent_change_24h'),
                 }
-
                 for tf_label, percent_val in percent_changes.items():
-                    
-                    if percent_val is None: # Hoppa över om data saknas (t.ex. 30m vid start)
-                        continue
-
+                    if percent_val is None: continue
                     for label, threshold in SORTED_SPIKE_THRESHOLDS:
-                        is_positive_spike = threshold > 0 and percent_val >= threshold
-                        is_negative_spike = threshold < 0 and percent_val <= threshold
-                        
-                        if is_positive_spike or is_negative_spike:
-                            # Använd den nya globala state-variabeln
+                        if (threshold > 0 and percent_val >= threshold) or (threshold < 0 and percent_val <= threshold):
                             if not SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label]:
-                                threading.Thread(target=notify_spike, args=(
-                                    tf_label, 
-                                    pair_key, 
-                                    percent_val, # Skicka rätt procentvärde
-                                    current_price_eur, # Använd EUR för notis 
-                                    label
-                                )).start()
+                                threading.Thread(target=notify_spike, args=(tf_label, pair_key, percent_val, current_price_eur, label)).start()
                                 SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label] = True
-                                break # Skicka bara den starkaste notisen FÖR DENNA TIDSRAM
+                                break 
                         else:
-                            # Återställ flaggan om priset faller under tröskeln
                             if SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label]:
                                 SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label] = False
-                                
-                # 9. Återställ notifikationer om signalen är neutral
-                if abs(signal_rating) < 1:
-                     SENT_NOTIFICATIONS[pair_ticker] = 0
 
-            # 10. Kontrollera Arbitrage-signal
+            # 10. Arbitrage Notiser
             crypto_keys = list(CRYPTO_PAIRS.keys())
             for key1, key2 in itertools.combinations(crypto_keys, 2):
-
                 ticker1 = CRYPTO_PAIRS[key1]
                 ticker2 = CRYPTO_PAIRS[key2]
-
                 rating1 = new_ratings.get(ticker1, 0)
                 rating2 = new_ratings.get(ticker2, 0)
-
-                if rating1 is None or rating2 is None:
-                    continue
-
+                if rating1 is None or rating2 is None: continue
                 difference = abs(rating1 - rating2)
-
-                sorted_tickers = sorted([ticker1, ticker2])
-                pair_key_tracker = f"{sorted_tickers[0]} __{sorted_tickers[1]}"
-
+                pair_key_tracker = f"{sorted([ticker1, ticker2])[0]}__{sorted([ticker1, ticker2])[1]}"
+                
                 if difference >= DIFF_THRESHOLD: 
-                    last_notified_diff = SENT_DIFF_NOTIFICATIONS.get(pair_key_tracker, 0)
-
-                    if difference > last_notified_diff:
-
+                    if difference > SENT_DIFF_NOTIFICATIONS.get(pair_key_tracker, 0):
                         threading.Thread(target=notify_diff, args=(key1, rating1, key2, rating2, difference)).start()
-
                         SENT_DIFF_NOTIFICATIONS[pair_key_tracker] = difference
+                elif pair_key_tracker in SENT_DIFF_NOTIFICATIONS:
+                    SENT_DIFF_NOTIFICATIONS[pair_key_tracker] = 0
 
-                else:
-                    if pair_key_tracker in SENT_DIFF_NOTIFICATIONS:
-                        SENT_DIFF_NOTIFICATIONS[pair_key_tracker] = 0
-                        
             # 11. Excel-loggning var 5:e minut
-            local_interval_counter += 1
             if local_interval_counter % 5 == 0:
-                # Skickar kopian av historiken till log_data_to_excel
-                # Använder deepcopy för att säkerställa att inga data race-villkor uppstår under loggning
                 log_data_to_excel(copy.deepcopy({ticker: list(history) for ticker, history in data_history.items()}))
             
-            # 12. Periodisk Sammanfattningskontroll
+            # 12. Periodisk Sammanfattning
             now_hour = current_time.hour
-            now_minute = current_time.minute
-            
-            # Skickas endast om timmen är i SUMMARY_SEND_TIMES och minuten är nära 00
-            if now_hour in SUMMARY_SEND_TIMES and now_minute < 2:
+            if now_hour in SUMMARY_SEND_TIMES and current_time.minute < 2:
                 last_sent = LAST_SUMMARY_SENT.get(now_hour)
-                # Skicka endast om den inte har skickats idag (eller om det är första gången)
                 if last_sent is None or last_sent.date() < current_time.date():
-                    # Måste skickas utanför data_lock
                     threading.Thread(target=notify_periodic_summary).start() 
                     LAST_SUMMARY_SENT[now_hour] = current_time
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattningsnotis skickad för kl {now_hour}:00.")
-                
-            current_signal_ratings = new_ratings
             
+            current_signal_ratings = new_ratings
             print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
 
             # --- SLUT PÅ LÅST BLOCK ---
         
-        # SERVER-STYRD VÄNTETID (Helt oberoende av webbläsaren)
-        time.sleep(UPDATE_INTERVAL_SECONDS_DATA) # Väntar 60 sekunder
-        
+        # SERVER-STYRD VÄNTETID
+        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)        
 # =========================================================================
 # === DASH KOMPONENTER OCH LAYOUT ===
 # =========================================================================

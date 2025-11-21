@@ -467,25 +467,35 @@ def get_eur_sek_rate():
         return 11.50
 
 ### ÄNDRING: Returnera BÅDE EUR och SEK pris ###
+from datetime import datetime, timedelta
+import requests
+# KRAKEN_OHLC_API_URL måste vara definierad någonstans (antar att den är)
+
 def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
 
-# --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
+    # --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     # ----------------------------------------------------------------
 
     """Hämtar historiskt slutpris (stängningspris) från Kraken OHLC API."""
+    
+    # OBS: Använder since_days_ago för att beräkna target_timestamp.
+    # Vi hämtar lite extra data (typ 10 dagar innan) för att säkerställa att vi fångar det exakta stängningspriset.
     since_time = datetime.now() - timedelta(days=since_days_ago)
     since_unix = int((since_time - timedelta(days=10)).timestamp())
     params = {'pair': pair_ticker, 'interval': 1440, 'since': since_unix}
 
     try:
-        response = requests.get(KRAKEN_OHLC_API_URL, params=params, timeout=10)
+        # KORRIGERING 1: Lägg till headers=headers i anropet
+        response = requests.get(KRAKEN_OHLC_API_URL, params=params, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
 
         if data.get('error') and data['error']:
+            # KORRIGERING 2: Logga fel vid API-svar
+            print(f"🔴 [FEL] OHLC API-fel för {pair_ticker}: {data['error']}")
             return None, None, f"OHLC Fel: {data['error']}."
 
         kraken_pair_key = list(data['result'].keys())[0]
@@ -494,10 +504,11 @@ def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
         target_timestamp = since_time.timestamp()
         best_match_price_eur = None
 
+        # Sök bakåt för det senaste stängningspriset FÖRE target_timestamp
         for entry in reversed(ohlc_data):
             timestamp = entry[0]
             if timestamp < target_timestamp:
-                best_match_price_eur = float(entry[4])
+                best_match_price_eur = float(entry[4]) # index 4 är stängningspris
                 break
 
         if best_match_price_eur is not None:
@@ -507,6 +518,8 @@ def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
         return None, None, f"Ingen tillförlitlig OHLC-data hittades."
 
     except Exception as e:
+        # KORRIGERING 3: Logga nätverksfel vid exception
+        print(f"🔴 [FEL] Fel vid hämtning av OHLC-data för {pair_ticker}: {e}")
         return None, None, f"Fel vid hämtning av OHLC-data: {e}"
 ### SLUT PÅ ÄNDRING ###
 

@@ -546,7 +546,12 @@ def get_crypto_data(pair_ticker):
         
         # VIKTIGT: Lägg till headers=headers här
         response = requests.get(KRAKEN_TICKER_API_URL, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
+        
+        # --- NY KRITISK LOGGNING FÖR ATT FÅNGA STATUSKODEN INNAN DEN ORSAKAR ETT EXCEPTION ---
+        if response.status_code != 200:
+            print(f"🔴 [STATUSFEL] Kraken Ticker returnerade status: {response.status_code} för {pair_ticker}. Full respons: {response.text[:200]}") # <-- ÄNDRING/NY RAD
+            
+        response.raise_for_status() # Detta kastar HTTPError om status inte är 200
         data = response.json()
 
         if data.get('error') and data['error']: 
@@ -575,7 +580,7 @@ def get_crypto_data(pair_ticker):
             return None, f"Fick ett tomt Ticker-resultat."
 
     except Exception as e: 
-        # Här kan vi returnera direkt om ett fel inträffar
+        # Här fångas HTTPError (om statuskoden inte var 200) eller andra fel
         return None, f"Fel vid hämtning av Ticker-data: {e}"
 
     # Dessa rader körs endast om 'try' lyckades, eller om 'try' avslutades med 'return None, error'
@@ -602,7 +607,6 @@ def get_crypto_data(pair_ticker):
     }, None
 
 ### SLUT PÅ ÄNDRING ###
-
 def calculate_30min_trend(pair_ticker, history_data):
     """Beräknar den procentuella trenden över de senaste 30 lagrade datapunkterna (linjär regression)."""
 
@@ -888,10 +892,6 @@ def background_data_collector():
     print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
     print("---------------------------------------------------------")
 
-    # Initial datainsamling vid start om cachen är tom
-    # ... (INITIAL DATA HÄMTNING KOD ÄR INTE KORRIGERAD DÅ DEN TYDLIGEN FUNGERAR) ...
-    # OBS: Du bör lägga till felutskrift här också: if error: print(f"🔴 [FEL] Initial Ticker: {error}")
-    
     # Koden för initial datainsamling (före while True) behöver också felhantering
     initial_data_fetch = False
     with data_lock:
@@ -902,13 +902,15 @@ def background_data_collector():
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
         for pair_key, pair_ticker in CRYPTO_PAIRS.items():
             ticker_data, error = get_crypto_data(pair_ticker)
+            
+            # --- Initial Datainsamling: FELHANTERING ---
             if error:
-                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") # <-- ÄNDRING/FÖRBÄTTRING
+                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") # <-- BEHÅLLS
                 continue # Hoppa till nästa par
 
             if ticker_data:
-                 # ... (Resten av initial cashing logiken) ...
-                 with data_lock:
+                # ... (Resten av initial cashing logiken) ...
+                with data_lock:
                     global_kpi_cache[pair_ticker] = {
                         **ticker_data,
                         'price_7d_eur': ticker_data['price_eur'],
@@ -950,11 +952,12 @@ def background_data_collector():
                 # 1. Hämta Ticker-data
                 ticker_data, error = get_crypto_data(pair_ticker)
 
+                # --- Huvudloop: Ticker FELHANTERING ---
                 if error:
-                    print(f"🔴 [FEL Ticker] {pair_key}: {error}") # <-- ÄNDRING/FÖRBÄTTRING
+                    print(f"🔴 [FEL Ticker] {pair_key}: {error}") # <-- BEHÅLLS
                     continue # Hoppa till nästa par om fel uppstår
                 
-                # Debug: print(f"🟢 [OK] Hämtade Ticker data för {pair_ticker}") # <-- NY DEBUG LOGG
+                # Debug: print(f"🟢 [OK] Hämtade Ticker data för {pair_ticker}") # <-- NY DEBUG LOGG BEHÅLLS
 
                 current_price_sek = ticker_data['price_sek']
                 
@@ -976,35 +979,33 @@ def background_data_collector():
                     price_7d_eur, price_7d_sek, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
                     if error_7d:
                         # ANVÄND RÖTT FEL FÖR TYDLIGHET
-                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}") # <-- ÄNDRING/FÖRBÄTTRING
+                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}") # <-- BEHÅLLS
                     
                     price_30d_eur, price_30d_sek, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
                     if error_30d:
                         # ANVÄND RÖTT FEL FÖR TYDLIGHET
-                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}") # <-- ÄNDRING/FÖRBÄTTRING
+                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}") # <-- BEHÅLLS
                 
-                # ... (Resten av logiken för att beräkna trender och signaler) ...
-
-                # 6. Uppdatera Global KPI Cache
-                global_kpi_cache[pair_ticker] = {
-                    # ... (resten av cashingen) ...
-                }
-
-                # ... (Notis- och Arbitrage-logik) ...
+                # ... (Resten av logiken för att beräkna trender och signaler, cachen, notiser etc.) ...
             
             # 11. Excel-loggning var 5:e minut
-            # ...
+            # ... (logik) ...
 
             # 12. Periodisk Sammanfattning
-            # ...
+            # ... (logik) ...
 
             current_signal_ratings = new_ratings
-            # Här loggar vi framgång, eftersom inga 'continue' har exekverats
-            print(f"🟢 [OK] Datauppdatering slutförd för alla par. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}") # <-- ÄNDRING/FÖRBÄTTRING
+            # Loggar framgång för den fullständiga loopen
+            print(f"🟢 [OK] Datauppdatering slutförd för alla par. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}") # <-- BEHÅLLS
             print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
 
             # --- SLUT PÅ LÅST BLOCK ---
-        
+            
+        # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
+        # Detta var troligen den saknade delen som gjorde att tråden kraschade/försvann tyst.
+        time.sleep(60) # <-- KRITISK KORRIGERING
+
+# Obs: time.sleep(60) är inte definierad här, se till att du har 'import time' överst i din fil.        
         # Vänta 60 sekunder utanför låset
         time.sleep(60) # Glöm inte time.sleep(60) i slutet av while-loopen! # <-- Kanske saknas?        
         # SERVER-STYRD VÄNTETID

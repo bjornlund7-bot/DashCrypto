@@ -90,21 +90,30 @@ def background_data_collector():
             
     if initial_data_fetch:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
+        
+        # --- LOOP FÖR INITIAL DATAINSAMLING ---
         for pair_key, pair_ticker in CRYPTO_PAIRS.items():
             
-            # --- NY DIAGNOSTISK LOGG (Här kraschade det i din logg) ---
+            # Steg 1: Försök Hämta Data
             print(f"🟢 Försöker hämta Ticker för {pair_key} ({pair_ticker})...") 
-            # --------------------------
             
             ticker_data, error = get_crypto_data(pair_ticker)
             
-            # --- Initial Datainsamling: FELHANTERING ---
+            # Steg 2: Diagnostik och Felhantering (NY KOD FÖR BÄTTRE FELSÖKNING)
             if error:
-                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") 
-                continue # Hoppa till nästa par
-
+                 # KRITISK LOGG: Logga felmeddelandet och hoppa över detta par
+                 print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}. FEL: {error}")
+                 continue 
+            elif not ticker_data:
+                 # VARNING: Logga om data är tom trots att inget fel rapporterades
+                 print(f"⚠️ [VARNING] Ticker-hämtning för {pair_key} returnerade ingen data och inget fel. Hoppar över.")
+                 continue
+            else:
+                 # FRAMGÅNG: Logga priset för att bekräfta data
+                 print(f"🟢 [OK] Ticker-hämtning för {pair_key} lyckades. Pris EUR: {ticker_data.get('price_eur', 'N/A')}")
+                 
+            # Steg 3: Initial Caching (Endast om data är OK)
             if ticker_data:
-                # ... (Resten av initial cashing logiken) ...
                 with data_lock:
                     global_kpi_cache[pair_ticker] = {
                         **ticker_data,
@@ -126,13 +135,16 @@ def background_data_collector():
                         'price_sek': ticker_data['price_sek'],
                         'price_eur': ticker_data['price_eur']
                     })
+        
+        # Logga när Initial cashing är helt klar
+        print(f"🟢 [UPPSTART SLUTFÖRD] Initial cashing för alla par slutförd. Går till periodisk loop.")
+        # --- SLUT PÅ INITIAL DATAINSAMLING ---
 
 
     while True:
         
         # Säkerställ att vi låser när vi skriver till delade globala variabler
-        with data_lock:
-            
+        with data_lock:            
             # --- START PÅ LÅST BLOCK ---
             
             eur_sek_rate = get_eur_sek_rate()

@@ -172,8 +172,8 @@ def background_data_collector():
                 # 2. Uppdatera lokal historik (Deque)
                 data_history[pair_ticker].append({
                     'time': current_time, 
-                    'price_sek': ticker_price_sek,
-                    'price_eur': ticker_price_eur
+                    'price_sek': ticker_data['price_sek'], # ANVÄND 'ticker_data'
+                    'price_eur': ticker_data['price_eur'] # ANVÄND 'ticker_data'
                 })
                 local_history_list = list(data_history[pair_ticker]) 
 

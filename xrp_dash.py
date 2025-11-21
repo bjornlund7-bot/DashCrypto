@@ -341,13 +341,78 @@ def get_eur_sek_rate():
         print(f"🔴 [FEL] Oväntat fel vid EUR/SEK hämtning. Använder standardvärde. {e}")
         return 11.50
 ### ÄNDRING: Returnera BÅDE EUR och SEK pris ###
-
 def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
 
     # --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
+    # ----------------------------------------------------------------
+
+    # Beräkna 'since' timestamp (i sekunder)
+    # 86400 sekunder per dygn
+    since_timestamp = time.time() - (since_days_ago * 86400) 
+    
+    payload = {
+        'pair': pair_ticker,
+        'interval': 60, # 60 minuter = 1 timme
+        'since': int(since_timestamp)
+    }
+    
+    print(f"DEBUG: Försöker hämta OHLC-data för {pair_ticker} sedan {since_days_ago} dagar.")
+
+    try:
+        # Gör API-anropet till Kraken med headers
+        response = requests.get(KRAKEN_OHLC_API_URL, params=payload, headers=headers, timeout=10)
+        response.raise_for_status() # Kasta undantag för 4xx/5xx fel
+        
+        data = response.json()
+        
+        # Kontrollera om Kraken returnerade ett fel
+        if data.get('error'):
+            kraken_error = data['error']
+            # Ofta: EQuery:Unknown asset pair - om XXRPEUR är fel
+            print(f"🔴 [FEL FRÅN KRAKEN] Kunde inte hämta OHLC för {pair_ticker}. Fel: {kraken_error}")
+            return (None, None) # Returnera None för båda datastrukturerna
+
+        # Hämta data-arrayen (key är 'XXRPEUR' eller vad pair_ticker är)
+        data_key = list(data['result'].keys())[0]
+        ohlc_data = data['result'][data_key]
+        
+        # Kolumnindex: [0=time, 1=open, 2=high, 3=low, 4=close, 5=vwap, 6=volume, 7=count]
+        
+        # Konvertera till DataFrame (EUR-data)
+        df_eur = pd.DataFrame(ohlc_data, columns=[
+            'time', 'open', 'high', 'low', 'close', 'vwap', 'volume', 'count'
+        ])
+        
+        # Konvertera strängkolumner till numeriska, ignorera tidsstämpel (kolumn 0)
+        numeric_cols = ['open', 'high', 'low', 'close', 'vwap', 'volume']
+        for col in numeric_cols:
+             df_eur[col] = pd.to_numeric(df_eur[col], errors='coerce')
+
+        # Konvertera tid (timestamp) till datetime-objekt
+        df_eur['time'] = pd.to_datetime(df_eur['time'], unit='s')
+        
+        # --- NYTT: Skapa SEK DataFrame ---
+        df_sek = df_eur.copy()
+        for col in ['open', 'high', 'low', 'close', 'vwap']:
+            df_sek[col] = df_eur[col] * eur_sek_rate
+        
+        print(f"🟢 DEBUG: OHLC-data för {pair_ticker} hämtad och konverterad. Rader: {len(df_eur)}")
+        
+        # Returnera BÅDE EUR och SEK dataframes
+        return (df_eur, df_sek)
+
+    except requests.exceptions.Timeout:
+        print(f"🔴 [FEL] Timeout (10s) vid hämtning av Kraken OHLC för {pair_ticker}.")
+        return (None, None)
+    except requests.exceptions.RequestException as req_e:
+        print(f"🔴 [FEL] Nätverksfel vid Kraken OHLC för {pair_ticker}. {req_e}")
+        return (None, None) 
+    except Exception as e:
+        print(f"🔴 [KRITISKT FEL] Oväntat fel vid bearbetning av OHLC-data för {pair_ticker}. {e}")
+        return (None, None)
     # ----------------------------------------------------------------
 
     """Hämtar historiskt slutpris (stängningspris) från Kraken OHLC API."""

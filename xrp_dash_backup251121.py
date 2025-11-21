@@ -1,91 +1,455 @@
-# =========================================================================
-# === KRITISK FÖRSTA BLOCK: Nödvändiga Importer och Globala variabler ===
-# === (Simulering av Del 1, fixar NameErrors) ===
-# =========================================================================
-import copy
-from functools import lru_cache
-from datetime import datetime, timedelta
 import requests
-import threading
 import time
-import collections
-import itertools
-
-# Bibliotek som behövs för logik och Dash-komponenter
+from datetime import datetime, timedelta
 import pandas as pd
+from dash import Dash, dcc, html, Input, Output, State
+import plotly.graph_objects as go
+import collections
 from scipy.stats import linregress
 import numpy as np
+import os
+import openpyxl
+from functools import lru_cache
+import itertools
+import threading
+from dash import exceptions
+import re
+import sys
+import requests
+import json
+import logging
+from redis import from_url, exceptions
+import logging
+import gunicorn
+import copy
 import dash
-from dash.dependencies import Input, Output
-import dash_core_components as dcc
-import dash_html_components as html
-import plotly.graph_objects as go
+from dash import dcc # Den nya platsen för Dash Core Components
+from dash import html # Den nya platsen för Dash HTML Components
 
-# --- Globala inställningar och API-URL:er ---
-EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
+# --- Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
+EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# Tidsinställningar
-UPDATE_INTERVAL_SECONDS_DATA = 60 # Uppdateringsfrekvens för bakgrundstråden (60 sekunder)
-UPDATE_INTERVAL_MS_WEB = 10000 # Uppdateringsfrekvens för webbplatsen (10 sekunder)
-DASH_PORT = 8050
-SUMMARY_SEND_TIMES = ["08:00", "12:00", "18:00", "22:00"] # Exempel
-
-# Algoritm-inställningar
-MAX_DASH_POINTS = 100 # Max antal punkter i historik (100 minuter)
-SUMMARY_TREND_POINTS_30M = 30 # Används för 30m trend (Linjär regression)
-SUMMARY_TREND_POINTS_360M = 360 # Max längd för deque/graf
-REVERSION_THRESHOLD = 0.005 # 0.5% (Används i generate_mts_signal)
-DIFF_THRESHOLD = 5 # Dummy-värde för notiser
-
-# --- Valutor ---
+### ÄNDRING: Uppdaterade etiketter till EUR som standard ###
+# Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
 CRYPTO_PAIRS = {
-    'XRP': 'XXRPEUR', # Använd dina faktiska Kraken-tickrar här
-    'BTC': 'XXBTZEUR',
-    'ETH': 'XETHZEUR',
+    'XRP (Ripple)': 'XRPEUR',
+    'BTC (Bitcoin)': 'BTCEUR',
+    'ETH (Ethereum)': 'ETHEUR',
+    'SOL (Solana)': 'SOLEUR',
+    'GRASS (Grass)': 'GRASSEUR',
+    'ADA (Cardano)': 'ADAEUR',
+    'DOT (Polkadot)': 'DOTEUR',
+    'DOGE (Dogecoin)': 'DOGEEUR',
+    'PUMP (PUMP)': 'PUMPEUR',
+    'Cookie DAO': 'COOKIEEUR',
+    'Moonwalk (MF)': 'MFEUR', 
+    'YALA': 'YALAEUR', 
+    'WIF (dogwifhat)': 'WIFEUR',
+    'YFI (Yearn Finance)': 'YFIEUR',
+    'BNB (BNB Chain)': 'BNBEUR',
+    'TRX (Tron)': 'TRXEUR',
+    'PEPE (Pepe)': 'PEPEEUR',
+    'LTC (Litecoin)': 'LTCEUR',
+    'TRUMP (Official Trump)': 'TRUMPEUR',
+    'XTZ (Tezos)': 'XTZEUR',
+    'DASH (Dash)': 'DASHEUR',
+    'ZRO (LayerZero)': 'ZROEUR',
+    'WOO (Woo Network)': 'WOOEUR',
+    'GALA (Gala Games)': 'GALAEUR',
+    'SUI (SUI)': 'SUIEUR',
+    'BCH (Bitcoin Cash)': 'BCHEUR',
+    'ATOM (Cosmos)': 'ATOMEUR',
+    'AVAX (Avalanche)': 'AVAXEUR',
+    'ICP (Internet Computer Protocol)': 'ICPEUR',
+    'ZEC (Zcash)': 'ZECEUR',
+    '0G (ZeroGravity)': '0G/EUR', 
+    'XDC (XDC Network)': 'XDCEUR',
+    'UNI (Uniswap)': 'UNIEUR',
+    'IP (Story)': 'IPEUR',
+    'INJ (Injective)': 'INJEUR',
+    'AR (Arweave)': 'AREUR',
+    'EGLD (MultiversX)': 'EGLDEUR',
+    'LPT (LivePeer)': 'LPTEUR',
+    'KSM (Kusama)': 'KSMEUR',
+    'EUL (Euler)': 'EULEUR',
+    'GMX (GMX)': 'GMXEUR',
+    'AUCTION (Bounce)': 'AUCTIONEUR',
+    'MOVR (Moonriver)': 'MOVREUR',
+    'SSV (SSV Network)': 'SSVEUR',
+    'MLN (Enzyme Finance)': 'MLNEUR',
+    'ALCX (Alchemix)': 'ALCXEUR',
+    'AERO (Aerodrome Finance)': 'AEROEUR',
+    'MYX (MYX Finance)': 'MYXEUR',
+    'GNO (Gnosis)': 'GNOEUR',
 }
-DEFAULT_PAIR_KEY = 'XRP'
+DEFAULT_PAIR_KEY = 'XRP (Ripple)'
+### SLUT PÅ ÄNDRING ###
 
-# --- Trådhantering och Data Cacher ---
+# Filnamn för permanent datalagring (XLSX)
+EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
+
+# Inställningar för Dash
+UPDATE_INTERVAL_MS_WEB = 5000 # Snabbare intervall för ENBART webbuppdateringen (t.ex. 5 sek)
+UPDATE_INTERVAL_SECONDS_DATA = 60 # 60 sekunder - DATA HÄMTAS ENDAST I BAKGRUNDSTRÅDEN
+MAX_DASH_POINTS = 1440         # 24 h historik
+SUMMARY_TREND_POINTS_30M = 30    # 30 minuter
+SUMMARY_TREND_POINTS_360M = 360  # 360 minuter (6 timmar)
+
+# SMA-fönster för grafen
+SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]
+
+# =========================================================================
+# === KONFIGURATION FÖR TELEGRAM (Hämta tokens och chat-ID från Renders miljövariabler) ===
+
+# Byt ut 'DIN_TOKEN_VARIABEL' och 'DITT_CHAT_ID_VARIABEL' mot de exakta namnen
+# du har angett i Renders inställningar (t.ex. TELEGRAM_TOKEN och TELEGRAM_CHATID)
+
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
+# =========================================================================
+
+
+# --- Redis Konfiguration Hoppas detta ska hjälpa---
+REDIS_URL = os.environ.get('REDIS_URL')
+
+if REDIS_URL:
+    try:
+        r = from_url(REDIS_URL)
+        r.ping()
+        print("✅ Ansluten till Redis!")
+    except exceptions.ConnectionError as e:
+        logger.error(f"❌ Kunde inte ansluta till Redis: {e}")
+        r = None
+else:
+    logger.warning("REDIS_URL hittades inte. Appen kommer inte att cache:a data.")
+    r = None
+
+# Fallback/Standarddata (Endast för att undvika fel om API-anrop misslyckas)
+DEFAULT_DATA = {
+    'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
+    'timestamp': time.time(),
+    'EUR_SEK_RATE': 11.0 # Standardväxelkurs
+}
+
+
+
+
+# --- Strategikonstanter ---
+DIFF_THRESHOLD = 21 # Signalvärdesdifferens
+REVERSION_THRESHOLD = 0.02 # 2% (0.02)
+
+# NYA SPIKE TRÖSKLAR (GÄLLER NU 30m, 100m, 360m OCH 24h)
+SPIKE_THRESHOLDS = {
+    '+100%': 100.0,
+    '+75%': 75.0,
+    '+50%': 50.0,
+    '+25%': 25.0,
+    '+10%': 10.0,
+    '-10%': -10.0,
+    '-25%': -25.0,
+    '-50%': -50.0,
+}
+# Sortera trösklar: högst till lägst värde
+SORTED_SPIKE_THRESHOLDS = sorted(SPIKE_THRESHOLDS.items(), key=lambda item: item[1], reverse=True)
+TIMEFRAMES_FOR_SPIKES = ['30m', '100m', '360m', '24h']
+
+
+# -------------------------------------------------------------
+app = Dash(__name__)
+
+# --- GLOBAL LAGER ---
 data_lock = threading.Lock()
+data_history = {pair: collections.deque(maxlen=max(SMA_WINDOWS)) for pair in CRYPTO_PAIRS.values()}
 global_kpi_cache = {}
-# data_history maxlen är 360 minuter för att rymma 6 timmars data för grafer
-data_history = collections.defaultdict(lambda: collections.deque(maxlen=SUMMARY_TREND_POINTS_360M))
-current_signal_ratings = {}
-SENT_NOTIFICATIONS = {}
+SENT_NOTIFICATIONS = {pair: 0 for pair in CRYPTO_PAIRS.values()}
 SENT_DIFF_NOTIFICATIONS = {}
-SENT_SPIKE_NOTIFICATIONS = {}
-LAST_SUMMARY_SENT = datetime.min # För periodisk sammanfattning
+current_signal_ratings = {}
 
-# --- Dash app initialization ---
-app = dash.Dash(__name__)
+# NY STRUKTUR FÖR SPIKE-NOTISER (Per Tidsram, Per Par, Per Tröskel)
+SENT_SPIKE_NOTIFICATIONS = {
+    tf: {
+        pair: {label: False for label in SPIKE_THRESHOLDS.keys()}
+        for pair in CRYPTO_PAIRS.values()
+    }
+    for tf in TIMEFRAMES_FOR_SPIKES
+}
 
-# --- Hjälpfunktioner för formatering ---
-def format_price_eur(price):
-    if price is None: return "N/A"
-    return f"€{price:,.8f}".rstrip('0').rstrip('.')
+# För periodisk sammanfattning
+SUMMARY_SEND_TIMES = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] 
+LAST_SUMMARY_SENT = {hour: None for hour in SUMMARY_SEND_TIMES} 
 
-def format_price_sek(price):
-    if price is None: return "N/A"
-    # Mer aggressiv formatering för SEK (mindre decimaler)
-    return f"{price:,.2f} kr"
 
-def format_percent(percent):
-    if percent is None: return "N/A"
-    if percent >= 0: return f"+{percent:,.2f}%"
-    return f"{percent:,.2f}%"
+### ÄNDRING: Omdöpt format_sek till format_price_sek och lagt till format_price_eur ###
+def format_price_sek(value):
+    """Formaterar ett tal till 4 decimaler med tusenavgränsare (mellanslag) i SEK-stil."""
+    if not isinstance(value, (int, float)) or np.isnan(value) or value is None:
+        return "N/A"
+    return f"{value:,.4f}".replace(",", " ").replace(".", ",")
 
-# --- Dummy-funktioner för notiser/loggning (antas finnas) ---
-def notify_single(message): print(f"🔔 [NOTIS]: {message}")
-def notify_spike(message): print(f"🚨 [SPETSVARNING]: {message}")
-def notify_diff(message): print(f"⚠️ [DIFF VARNING]: {message}")
-def notify_periodic_summary(message): print(f"📋 [SAMMANFATTNING]: {message}")
-def log_data_to_excel(): pass # Dummy-funktion
+def format_price_eur(value):
+    """Formaterar ett tal till 4 decimaler med tusenavgränsare (mellanslag) i EUR-stil."""
+    if not isinstance(value, (int, float)) or np.isnan(value) or value is None:
+        return "N/A"
+    # Använder standard . för decimaler för EUR
+    return f"{value:,.4f}".replace(",", " ")
 
-# =========================================================================
-# === START PÅ DIN URSPRUNGLIGA DEL 2 ===
-# =========================================================================
+def format_percent(value):
+    """Formaterar en procentuell förändring med tecken och 2 decimaler."""
+    if value is None:
+        return "N/A %"
+    if not isinstance(value, (int, float)) or np.isnan(value):
+        return "N/A %"
+    return f"{value:+.2f} %"
+### SLUT PÅ ÄNDRING ###
+
+# --- TELEGRAM NOTIS FUNKTIONER ---
+
+def send_telegram_message(message_text):
+    """Generisk funktion för att skicka meddelanden via Telegram API."""
+    base_url = "https://api.telegram.org/bot{token}/sendMessage"
+    url = base_url.format(token=TELEGRAM_BOT_TOKEN)
+
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message_text,
+        'parse_mode': 'Markdown'
+    }
+
+    try:
+        response = requests.post(url, data=payload, timeout=5)
+        response.raise_for_status()
+
+        time.sleep(1.0)
+
+        return True
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] FEL vid skickande av Telegramnotis: {e}")
+        return False
+
+
+def notify_periodic_summary():
+    """Skickar en periodisk sammanfattning av de senaste 360m (6h) trenderna."""
+    global global_kpi_cache
+    
+    # 1. Hämta en säker kopia av datan
+    with data_lock:
+        local_kpi_cache = global_kpi_cache.copy()
+        
+    if not local_kpi_cache:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattning misslyckades: KPI-cache är tom.")
+        return False
+        
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Skickar Periodisk Sammanfattning (360m trend)...")
+
+    # 2. Förbered data för sortering och formatering
+    summary_data = []
+    
+    # OBS: Vi använder CRYPTO_PAIRS.items() för att få det visningsvänliga namnet
+    for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+        kpi = local_kpi_cache.get(pair_ticker, {})
+        
+        # Måste ha alla fält
+        change_360m = kpi.get('percent_change_360m')
+        signal_rating = kpi.get('signal_rating')
+        change_24h = kpi.get('percent_change_24h') # HÄMTA NYTT FÄLT: 24h förändring
+        aktuellt_varde = kpi.get('current_price_eur') # HÄMTA NYTT FÄLT: Aktuellt varde
+
+        # Välj ett enklare namn för tabellen
+        display_name = pair_key.split('/')[0].strip()
+        display_name = re.sub(r'\s*\((.*?)\)', '', display_name).strip()
+
+
+        if change_360m is not None and signal_rating is not None and change_24h is not None:
+            summary_data.append({
+                'crypto': display_name,
+                'change_360m': change_360m,
+                'rating': signal_rating,
+                'change_24h': change_24h, # Lägg till 24h
+                'aktuellt_varde': aktuellt_varde, # 2025-11-18
+            })
+
+    if not summary_data:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattning misslyckades: Ingen meningsfull 360m data hittades.")
+        return False
+
+    # 3. Sortera data (Högst procentuell förändring överst)
+    sorted_summary = sorted(summary_data, key=lambda x: x['change_360m'], reverse=True)
+    
+    # 4. Bygg meddelandet
+    header = (
+        f"⏳ *PERIODISK SAMMANFATTNING (360 MIN TREND)* ⏳\n\n"
+        f"Översikt över 6-timmars och 24-timmars rörelse samt MTS-signalbetyg.\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"| Krypto | 360m % | 24h % | Betyg | Kurs |\n" # NYA KOLUMNER
+        f"|---|---|---|---|---|\n"
+    )
+    
+    table_rows = []
+    for item in sorted_summary:
+        # Formatera kolumner
+        crypto_col = f"`{item['crypto']}`"
+        change_360m_col = f"`{format_percent(item['change_360m'])}`"
+        change_24h_col = f"`{format_percent(item['change_24h'])}`" # Formatera 24h
+        rating_col = f"`{item['rating']:+}`"
+        aktuellt_varde_col = f"`{item['aktuellt_varde']}`"
+
+        
+        table_rows.append(f"| {crypto_col} | {change_360m_col} | {change_24h_col} | {rating_col} | {aktuellt_varde_col} |")
+        
+    message = header + "\n".join(table_rows)
+
+    # 5. Skicka meddelandet
+    return send_telegram_message(message)
+
+
+def notify_diff(crypto1, rating1, crypto2, rating2, difference):
+    """Skickar notis vid stor signalbetygsskillnad."""
+    message = (
+        f"🚨 *ALARM SIGNALDIFFERENS ({DIFF_THRESHOLD}-steg)* 🚨\n\n"
+        f"Skillnad i signalbetyg har uppnått tröskeln (Diff: `{difference}` >= `{DIFF_THRESHOLD}`).\n\n"
+        f"Krypto 1: *{crypto1}* (Betyg: `{rating1:+}`)\n"
+        f"Krypto 2: *{crypto2}* (Betyg: `{rating2:+}`)\n\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    return send_telegram_message(message)
+
+
+def notify_single(signal_text, pair_key, current_price_eur, signal_rating):
+    """Skickar notis vid stark Köp/Sälj-signal. Använder ALLTID EUR."""
+
+    price_formatted = f"{current_price_eur:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    message = (
+        f"🔔 *MTS HANDELSTRIGGER (Betyg {signal_rating:+})* 🔔\n\n"
+        f"Kryptovaluta: *{pair_key}*\n"
+        f"Signal: *{signal_text}*\n"
+        f"Pris: `{price_formatted} EUR`\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    return send_telegram_message(message)
+
+def notify_spike(timeframe_label, pair_key, percent_change, current_price_eur, threshold_label):
+    """(GENERALISERAD) Skickar notis vid kraftig uppgång/nedgång på en specifik tidsram. Använder ALLTID EUR."""
+    
+    price_formatted = f"{current_price_eur:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    direction = "UPPGÅNG" if percent_change >= 0 else "NEDGÅNG"
+    emoji = "🚀" if percent_change >= 0 else "📉"
+    
+    message = (
+        f"{emoji} *{timeframe_label.upper()} PRISVARNING ({threshold_label} {direction})* {emoji}\n\n"
+        f"Kryptovaluta: *{pair_key}*\n"
+        f"Förändring: *{format_percent(percent_change)}* på {timeframe_label}.\n"
+        f"Tröskel: *{threshold_label}* passerad.\n"
+        f"Pris: `{price_formatted} EUR`\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    return send_telegram_message(message)
+
+
+def send_test_notification():
+    """Skickar en testnotis via Telegram."""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Försöker skicka TEST-TELEGRAM...")
+
+    message = (
+        f"✅ *OMSTART* ✅\n\n"
+        f"Detta är ett automatiskt testmeddelande från din Kryptospårare.\n"
+        f"Telegram-notiser fungerar korrekt (om du ser detta i din chatt).\n\n"
+        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    success = send_telegram_message(message)
+    if success:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] TEST TELEGRAM SKICKAT. Kontrollera din chatt.")
+    else:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] TEST TELEGRAM MISSLYCKADES. Kontrollera dina Telegram-konstanter och/eller felloggen ovan.")
+    return success
+
+# --- ÖVRIGA FUNKTIONER (Datahantering och KPI:er) ---
+
+def sanitize_sheet_name(pair_key):
+    """Rensar kryptonamnet för att användas som arkivnamn i Excel."""
+    name = pair_key.split('/')[0].strip()
+    name = re.sub(r'\s*\((.*?)\)', '', name).strip()
+    name = re.sub(r'[^\w\s-]', '', name) 
+    name = name.replace(' ', '_')
+    return name[:31]
+
+def load_historical_data():
+    """Laddar historik från Excel-filen för alla kända par vid start."""
+    global data_history
+
+    max_len = max(SMA_WINDOWS)
+
+    for pair_ticker in CRYPTO_PAIRS.values():
+        if pair_ticker not in data_history:
+            data_history[pair_ticker] = collections.deque(maxlen=max_len)
+        else:
+             data_history[pair_ticker] = collections.deque(data_history[pair_ticker], maxlen=max_len)
+
+        if not data_history[pair_ticker]:
+            # Lägg till en startpunkt med pris 0 för att undvika tomma lister vid första körningen
+            ### ÄNDRING: Lägg till båda valutorna i starthistorik ###
+            data_history[pair_ticker].append({'time': datetime.now() - timedelta(minutes=max_len), 'price_sek': 0.0, 'price_eur': 0.0})
+
+    if os.path.exists(EXCEL_FILE_PATH):
+        try:
+            xlsx = pd.ExcelFile(EXCEL_FILE_PATH)
+            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+                sheet_name = sanitize_sheet_name(pair_key)
+                if sheet_name in xlsx.sheet_names:
+                    pair_df = pd.read_excel(xlsx, sheet_name=sheet_name)
+                    
+                    ### ÄNDRING: Ladda historik för båda valutorna om de finns, annars fallback ###
+                    if not pair_df.empty and 'time' in pair_df.columns:
+                        pair_df['time'] = pd.to_datetime(pair_df['time'])
+                        
+                        # Fallback för gamla loggfiler som bara har price_sek
+                        if 'price_eur' not in pair_df.columns:
+                            pair_df['price_eur'] = 0.0 # Kan inte back-populata, sätter till 0
+                        
+                        pair_df = pair_df[pair_df['price_sek'] > 0.0].sort_values(by='time').tail(max_len)
+                        
+                        with data_lock:
+                            data_history[pair_ticker].clear()
+                            for index, row in pair_df.iterrows():
+                                data_history[pair_ticker].append({
+                                    'time': row['time'], 
+                                    'price_sek': row['price_sek'],
+                                    'price_eur': row.get('price_eur', 0.0) # Använd .get() för säkerhets skull
+                                })
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Varning: Kunde inte läsa historik från Excel: {e}") 
+
+def log_data_to_excel(data_to_log):
+    """Skriver all aktuell historisk data till Excel-filen. Anropas inuti data_lock."""
+    
+    try:
+        with pd.ExcelWriter(EXCEL_FILE_PATH, engine='openpyxl') as writer:
+            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+                current_df = pd.DataFrame(data_to_log.get(pair_ticker, []))
+                
+                ### ÄNDRING: Logga båda valutorna ###
+                current_df = current_df[current_df['price_sek'] > 0.0]
+                if len(current_df) < 1: continue
+                
+                sheet_name = sanitize_sheet_name(pair_key)  
+                current_df['time'] = current_df['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                current_df['price_sek'] = current_df['price_sek'].round(8)
+                current_df['price_eur'] = current_df['price_eur'].round(8)
+                
+                # Säkerställ kolumnordning
+                current_df = current_df[['time', 'price_sek', 'price_eur']]
+                
+                current_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Data loggad till Excel.")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] FEL vid skrivning till Excel: {e}")
+### SLUT PÅ ÄNDRING ###
 
 @lru_cache(maxsize=1)
 def get_eur_sek_rate():
@@ -103,6 +467,9 @@ def get_eur_sek_rate():
         return 11.50
 
 ### ÄNDRING: Returnera BÅDE EUR och SEK pris ###
+from datetime import datetime, timedelta
+import requests
+# KRAKEN_OHLC_API_URL måste vara definierad någonstans (antar att den är)
 
 def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
 
@@ -173,7 +540,6 @@ def get_crypto_data(pair_ticker):
     # Initialisera variabler för att undvika UnboundLocalError om 'try' misslyckas
     latest_price_eur, high_24h_eur, low_24h_eur, open_24h_eur = 0.0, 0.0, 0.0, 0.0
     percent_change_24h = 0.0
-    price_sek, high_sek, low_sek, open_sek = 0.0, 0.0, 0.0, 0.0
     
     try:
         params = {'pair': pair_ticker}
@@ -241,7 +607,6 @@ def get_crypto_data(pair_ticker):
     }, None
 
 ### SLUT PÅ ÄNDRING ###
-
 def calculate_30min_trend(pair_ticker, history_data):
     """Beräknar den procentuella trenden över de senaste 30 lagrade datapunkterna (linjär regression)."""
 
@@ -257,7 +622,7 @@ def calculate_30min_trend(pair_ticker, history_data):
     y_price = df['price_sek'] # Behåll logik på SEK
 
     # Linjär regression
-    slope, intercept, r_value, p_value, std_err = linregress(x_time_numeric, y_price)
+    slope, intercept, _, _, _ = linregress(x_time_numeric, y_price)
 
     start_price_trend = slope * x_time_numeric.min() + intercept
     end_price_trend = slope * x_time_numeric.max() + intercept
@@ -343,17 +708,12 @@ def generate_mts_signal(kpi_data, history_data):
         return "Väntar på 30m data", 0, '#555555', 0.0, 0.0
 
     # Huvud-KPI:er (Dessa är 'price_sek', 'high_24h_sek' etc. som matas in från background_collector)
-    # Observera: kpi_data måste anpassas för att matcha de nya SEK-nycklarna från background_data_collector
-    price_sek = kpi_data['price_sek']
-    high_24h = kpi_data['high_24h_sek']
-    low_24h = kpi_data['low_24h_sek']
+    price_sek = kpi_data['price']
+    high_24h = kpi_data['high_24h']
+    low_24h = kpi_data['low_24h']
 
-    price_7d_ago = kpi_data.get('price_7d_sek')
-    price_30d_ago = kpi_data.get('price_30d_sek')
-    
-    percent_change_100m = kpi_data.get('percent_change_100m', 0.0)
-    percent_change_360m = kpi_data.get('percent_change_360m', 0.0)
-
+    price_7d_ago = kpi_data['price_7d']
+    price_30d_ago = kpi_data['price_30d']
 
     # KORRIGERING: Hantera potentialen för att OHLC-data saknas/är noll
     if price_7d_ago is None or price_30d_ago is None or (price_7d_ago is not None and price_7d_ago <= 0) or (price_30d_ago is not None and price_30d_ago <= 0):
@@ -387,7 +747,8 @@ def generate_mts_signal(kpi_data, history_data):
 
 
     # --- STEG 2: Medellångt Momentum (Max +/- 3 poäng) (UPPDATERAD) ---
-    # percent_change_100m och 360m hämtas nu från kpi_data (som sätts i collectorn)
+    percent_change_100m = kpi_data['percent_change_100m']
+    percent_change_360m = kpi_data['percent_change_360m'] # NY KPI
 
     # 24h Kvartilanalys
     range_24h = high_24h - low_24h
@@ -415,13 +776,13 @@ def generate_mts_signal(kpi_data, history_data):
         trend_100m_down_weak = (percent_change_100m <= -0.1)
 
         if is_bullish and trend_100m_up_weak:
-            short_term_rating += 1 
-            signal_text = "Momentum: Positiv (Väntar på styrka)"
-            signal_color = '#9ACD32' # Gul-grön
+             short_term_rating += 1 
+             signal_text = "Momentum: Positiv (Väntar på styrka)"
+             signal_color = '#9ACD32' # Gul-grön
         elif is_bearish and trend_100m_down_weak:
-            short_term_rating -= 1 
-            signal_text = "Momentum: Negativ (Väntar på svaghet)"
-            signal_color = '#FFA07A' # Ljust Orange
+             short_term_rating -= 1 
+             signal_text = "Momentum: Negativ (Väntar på svaghet)"
+             signal_color = '#FFA07A' # Ljust Orange
 
 
     # --- STEG 3: KORTSIKTIG TRIGGER (Max +/- 3 poäng) (OFÖRÄNDRAD) ---
@@ -486,8 +847,173 @@ def calculate_sma(df, window, price_key='price_sek'):
     return df[price_key].rolling(window=min(window, len(df))).mean()
 ### SLUT PÅ ÄNDRING ###
 
+# Del 2 av 2: Bakgrundslogik och Dash-komponenter
+
 # =========================================================================
-# === START PÅ DIN URSPRUNGLIGA DEL 3 ===
+# === NY FUNKTION: DEDIKERAD BAKGRUNDSLOGIK (LÅS-FIX APPLICERAD)
+# =========================================================================
+
+# (Antar att import copy, datetime, collections, threading, time, pd, go, html, dcc, Input, Output,
+#  app, data_lock, CRYPTO_PAIRS, DEFAULT_PAIR_KEY, DIFF_THRESHOLD, SORTED_SPIKE_THRESHOLDS,
+#  UPDATE_INTERVAL_SECONDS_DATA, UPDATE_INTERVAL_MS_WEB, SUMMARY_SEND_TIMES,
+#  DASH_PORT, format_price_eur, format_price_sek, format_percent,
+#  get_crypto_data, get_eur_sek_rate, get_ohlc_price,
+#  calculate_30min_trend, calculate_100min_change, calculate_360min_change,
+#  generate_mts_signal, notify_single, notify_spike, notify_diff, notify_periodic_summary,
+#  log_data_to_excel, calculate_sma, global_kpi_cache, SENT_NOTIFICATIONS,
+#  SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings,
+#  LAST_SUMMARY_SENT, data_history, itertools är definierade i del 1.)
+
+import copy # *** NY VIKTIG IMPORT ***
+from datetime import datetime
+import threading
+import time
+import collections
+import pandas as pd
+import plotly.graph_objects as go
+from dash.dependencies import Input, Output
+import itertools
+# (Antar att alla globala variabler och hjälpfunktioner från Del 1 finns här)
+
+
+
+
+UPDATE_INTERVAL_SECONDS_DATA = 60 # Sätter ett standardvärde för att undvika fel
+
+def background_data_collector():
+    """
+    DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
+    All skrivning till globala cacher sker inuti 'with data_lock:'.
+    """
+    global global_kpi_cache, SENT_NOTIFICATIONS, SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings, LAST_SUMMARY_SENT
+    
+    # Lokal räknare för OHLC/Excel-loggning
+    local_interval_counter = 0
+
+    print("---------------------------------------------------------")
+    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
+    print("---------------------------------------------------------")
+
+    # Koden för initial datainsamling (före while True) behöver också felhantering
+    initial_data_fetch = False
+    with data_lock:
+        if not global_kpi_cache:
+            initial_data_fetch = True
+            
+    if initial_data_fetch:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
+        for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+            
+            # --- NY DIAGNOSTISK LOGG ---
+            print(f"🟢 Försöker hämta Ticker för {pair_key} ({pair_ticker})...") # <-- NY RAD
+            # --------------------------
+            
+            ticker_data, error = get_crypto_data(pair_ticker)
+            
+            # --- Initial Datainsamling: FELHANTERING ---
+            if error:
+                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") # <-- BEHÅLLS
+                continue # Hoppa till nästa par
+
+            if ticker_data:
+                # ... (Resten av initial cashing logiken) ...
+                with data_lock:
+                    global_kpi_cache[pair_ticker] = {
+                        **ticker_data,
+                        'price_7d_eur': ticker_data['price_eur'],
+                        'price_30d_eur': ticker_data['price_eur'],
+                        'price_7d_sek': ticker_data['price_sek'],
+                        'price_30d_sek': ticker_data['price_sek'],
+                        'percent_change_100m': 0.0,
+                        'percent_change_360m': 0.0,
+                        'time': datetime.now(),
+                        'signal_rating': 0,
+                        'signal_text': 'Väntar på historik',
+                        'signal_color': '#555555',
+                    }
+                    data_history[pair_ticker].append({
+                        'time': datetime.now(), 
+                        'price_sek': ticker_data['price_sek'],
+                        'price_eur': ticker_data['price_eur']
+                    })
+
+
+    while True:
+        
+        # Säkerställ att vi låser när vi skriver till delade globala variabler
+        with data_lock:
+            
+            # --- START PÅ LÅST BLOCK ---
+            
+            eur_sek_rate = get_eur_sek_rate()
+            current_time = datetime.now()
+            new_ratings = {}
+            print(f"\n--- Datauppdatering startad: {current_time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+
+            local_interval_counter += 1
+            is_ohlc_update_time = local_interval_counter % 60 == 0
+
+            # Första loop: Hämta Ticker-data, uppdatera historik, hämta OHLC
+            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+                
+                # 1. Hämta Ticker-data
+                ticker_data, error = get_crypto_data(pair_ticker)
+
+                # --- Huvudloop: Ticker FELHANTERING ---
+                if error:
+                    print(f"🔴 [FEL Ticker] {pair_key}: {error}") # <-- BEHÅLLS
+                    continue # Hoppa till nästa par om fel uppstår
+                
+                # Debug: print(f"🟢 [OK] Hämtade Ticker data för {pair_ticker}") # <-- BEHÅLLS
+
+                current_price_sek = ticker_data['price_sek']
+                
+                # 2. Uppdatera lokal historik (Deque)
+                data_history[pair_ticker].append({
+                    'time': current_time, 
+                    'price_sek': ticker_data['price_sek'],
+                    'price_eur': ticker_data['price_eur']
+                })
+                local_history_list = list(data_history[pair_ticker]) 
+
+                # 3. Hämta OHLC-data (Endast vid uppdatering)
+                price_7d_eur, price_7d_sek = None, None
+                price_30d_eur, price_30d_sek = None, None
+                
+                cached_kpi = global_kpi_cache.get(pair_ticker, {})
+                
+                if is_ohlc_update_time:
+                    price_7d_eur, price_7d_sek, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
+                    if error_7d:
+                        # ANVÄND RÖTT FEL FÖR TYDLIGHET
+                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}") # <-- BEHÅLLS
+                    
+                    price_30d_eur, price_30d_sek, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
+                    if error_30d:
+                        # ANVÄND RÖTT FEL FÖR TYDLIGHET
+                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}") # <-- BEHÅLLS
+                
+                # ... (Resten av logiken för att beräkna trender och signaler, cachen, notiser etc.) ...
+            
+            # 11. Excel-loggning var 5:e minut
+            # ... (logik) ...
+
+            # 12. Periodisk Sammanfattning
+            # ... (logik) ...
+
+            current_signal_ratings = new_ratings
+            # Loggar framgång för den fullständiga loopen
+            print(f"🟢 [OK] Datauppdatering slutförd för alla par. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}") # <-- BEHÅLLS
+            print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+
+            # --- SLUT PÅ LÅST BLOCK ---
+            
+        # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
+        # Jag standardiserar till UPDATE_INTERVAL_SECONDS_DATA för att vara konsekvent.
+        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
+    
+# =========================================================================
+# === DASH KOMPONENTER OCH LAYOUT ===
 # =========================================================================
 
 # Funktionen för att skapa instrumentpanelens layout
@@ -496,7 +1022,7 @@ def create_dashboard_layout():
     DARK_BACKGROUND = '#2d3748' # Mörk bakgrund
     LIGHT_TEXT = '#edf2f7'       # Ljus text
     CARD_BACKGROUND_CONTRAST = '#4a5568' # Bakgrund för enskilda kort/element (inte översikt)
-    BORDER_COLOR = '#666'        # Ljusare grå kant
+    BORDER_COLOR = '#666'         # Ljusare grå kant
 
     GLOBAL_STYLE = {
         'max-width': '2400px', 
@@ -527,6 +1053,7 @@ def create_dashboard_layout():
 
         html.Hr(style={'border-color': BORDER_COLOR}),
 
+        # --- FLYTTAD: Huvudgrafen först efter globala element ---
         # Val av Kryptopar och KPI:er för diagrammet
         html.Div([
             html.Div([
@@ -572,185 +1099,6 @@ def create_dashboard_layout():
         html.Div(id='hidden-data-refresh', style={'display': 'none'})
 
     ], style=GLOBAL_STYLE) 
-
-
-def background_data_collector():
-    """
-    DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
-    All skrivning till globala cacher sker inuti 'with data_lock:'.
-    """
-    global global_kpi_cache, SENT_NOTIFICATIONS, SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings, LAST_SUMMARY_SENT
-    
-    # Lokal räknare för OHLC/Excel-loggning
-    local_interval_counter = 0
-
-    print("---------------------------------------------------------")
-    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
-    print("---------------------------------------------------------")
-
-    # Koden för initial datainsamling (före while True) behöver också felhantering
-    initial_data_fetch = False
-    with data_lock:
-        if not global_kpi_cache:
-            initial_data_fetch = True
-            
-    if initial_data_fetch:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
-        for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-            
-            # --- NY DIAGNOSTISK LOGG (Här kraschade det i din logg) ---
-            print(f"🟢 Försöker hämta Ticker för {pair_key} ({pair_ticker})...") 
-            # --------------------------
-            
-            ticker_data, error = get_crypto_data(pair_ticker)
-            
-            # --- Initial Datainsamling: FELHANTERING ---
-            if error:
-                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") 
-                continue # Hoppa till nästa par
-
-            if ticker_data:
-                # ... (Resten av initial cashing logiken) ...
-                with data_lock:
-                    global_kpi_cache[pair_ticker] = {
-                        **ticker_data,
-                        'price_7d_eur': ticker_data['price_eur'],
-                        'price_30d_eur': ticker_data['price_eur'],
-                        'price_7d_sek': ticker_data['price_sek'],
-                        'price_30d_sek': ticker_data['price_sek'],
-                        'percent_change_100m': 0.0,
-                        'percent_change_360m': 0.0,
-                        'trend_30m_percent': 0.0,
-                        'trend_30m_color': '#555555',
-                        'time': datetime.now(),
-                        'signal_rating': 0,
-                        'signal_text': 'Väntar på historik',
-                        'signal_color': '#555555',
-                    }
-                    data_history[pair_ticker].append({
-                        'time': datetime.now(), 
-                        'price_sek': ticker_data['price_sek'],
-                        'price_eur': ticker_data['price_eur']
-                    })
-
-
-    while True:
-        
-        # Säkerställ att vi låser när vi skriver till delade globala variabler
-        with data_lock:
-            
-            # --- START PÅ LÅST BLOCK ---
-            
-            eur_sek_rate = get_eur_sek_rate()
-            current_time = datetime.now()
-            new_ratings = {}
-            print(f"\n--- Datauppdatering startad: {current_time.strftime('%Y-%m-%d %H:%M:%S')} ---")
-
-            local_interval_counter += 1
-            is_ohlc_update_time = local_interval_counter % 60 == 0 # Varje hel timme
-
-            # Första loop: Hämta Ticker-data, uppdatera historik, hämta OHLC
-            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-                
-                # 1. Hämta Ticker-data
-                ticker_data, error = get_crypto_data(pair_ticker)
-
-                # --- Huvudloop: Ticker FELHANTERING ---
-                if error:
-                    print(f"🔴 [FEL Ticker] {pair_key}: {error}") 
-                    continue # Hoppa till nästa par om fel uppstår
-                
-                cached_kpi = global_kpi_cache.get(pair_ticker, {})
-                current_price_sek = ticker_data['price_sek']
-                
-                # 2. Uppdatera lokal historik (Deque)
-                data_history[pair_ticker].append({
-                    'time': current_time, 
-                    'price_sek': ticker_data['price_sek'],
-                    'price_eur': ticker_data['price_eur']
-                })
-                local_history_list = list(data_history[pair_ticker]) 
-
-                # 3. Hämta/Uppdatera OHLC-data (Endast vid uppdatering)
-                price_7d_eur, price_7d_sek = cached_kpi.get('price_7d_eur'), cached_kpi.get('price_7d_sek')
-                price_30d_eur, price_30d_sek = cached_kpi.get('price_30d_eur'), cached_kpi.get('price_30d_sek')
-                
-                if is_ohlc_update_time:
-                    p7e, p7s, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
-                    if not error_7d:
-                        price_7d_eur, price_7d_sek = p7e, p7s
-                    else:
-                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}")
-                    
-                    p30e, p30s, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
-                    if not error_30d:
-                        price_30d_eur, price_30d_sek = p30e, p30s
-                    else:
-                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}")
-
-
-                # 4. Beräkna trend-KPI:er
-                trend_30m_percent, trend_30m_text, trend_30m_color = calculate_30min_trend(pair_ticker, local_history_list)
-                percent_change_100m = calculate_100min_change(local_history_list)
-                percent_change_360m = calculate_360min_change(local_history_list)
-
-                # 5. Skapa KPI-objekt för MTS-signal
-                mts_kpi_data = {
-                    'price_sek': current_price_sek,
-                    'high_24h_sek': ticker_data['high_24h_sek'],
-                    'low_24h_sek': ticker_data['low_24h_sek'],
-                    'price_7d_sek': price_7d_sek,
-                    'price_30d_sek': price_30d_sek,
-                    'percent_change_100m': percent_change_100m,
-                    'percent_change_360m': percent_change_360m,
-                }
-                
-                # 6. Beräkna MTS-signal
-                signal_text, total_rating, signal_color, percent_7d, percent_30d = generate_mts_signal(mts_kpi_data, local_history_list)
-                
-                # 7. Uppdatera global KPI cache
-                global_kpi_cache[pair_ticker] = {
-                    **ticker_data,
-                    'price_7d_eur': price_7d_eur,
-                    'price_30d_eur': price_30d_eur,
-                    'price_7d_sek': price_7d_sek,
-                    'price_30d_sek': price_30d_sek,
-                    'percent_change_100m': percent_change_100m,
-                    'percent_change_360m': percent_change_360m,
-                    'trend_30m_percent': trend_30m_percent,
-                    'trend_30m_text': trend_30m_text,
-                    'trend_30m_color': trend_30m_color,
-                    'percent_7d': percent_7d,
-                    'percent_30d': percent_30d,
-                    'time': current_time,
-                    'signal_rating': total_rating,
-                    'signal_text': signal_text,
-                    'signal_color': signal_color,
-                }
-                new_ratings[pair_ticker] = total_rating
-
-                # 8. Notis-logik (Här skulle notis-logiken placeras)
-                # ... (notify_spike, notify_diff, etc.) ...
-
-            # 9. Uppdatera signalratings för att matas in i Dash-callbacks
-            current_signal_ratings = new_ratings
-
-            # 10. Periodisk Sammanfattning
-            # ... (logik för notify_periodic_summary) ...
-
-            # 11. Excel-loggning var 5:e minut
-            # ... (log_data_to_excel) ...
-
-
-            # Loggar framgång för den fullständiga loopen
-            print(f"🟢 [OK] Datauppdatering slutförd för alla par. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-
-            # --- SLUT PÅ LÅST BLOCK ---
-            
-        # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
-        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
-
 
 # --- DASH CALLBACKS (Interaktion och Uppdatering) ---
 
@@ -1172,17 +1520,21 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
 # === HUVUDFUNKTION OCH START AV APPLIKATIONEN ===
 # =========================================================================
 
-# 1. Sätt Layouten OMEDELBART
+# 1. Sätt Layouten OMEDELBART (Global nivå - Längst till vänster)
+# Detta måste ske här för att Render ska hitta layouten.
 app.layout = create_dashboard_layout()
 
-# 2. Starta Bakgrundstråden OMEDELBART
+# 2. Starta Bakgrundstråden OMEDELBART (Global nivå - Längst till vänster)
+# Detta gör att datainsamlingen startar direkt när servern startar.
+# Vi kollar om tråden redan lever för att vara säkra (bra praxis).
 already_running = any(t.name == "BackgroundCollector" for t in threading.enumerate())
 if not already_running:
     data_thread = threading.Thread(target=background_data_collector, name="BackgroundCollector", daemon=True)
     data_thread.start()
     print(">>> Bakgrundstråd startad <<<")
 
-# 3. Definiera Servern
+# 3. Definiera Servern (Global nivå - Längst till vänster)
+# Gunicorn letar efter denna variabel.
 server = app.server
 
 # 4. Detta block körs BARA om du testar filen lokalt på din dator
@@ -1190,5 +1542,5 @@ if __name__ == '__main__':
     print("---------------------------------------------------------")
     print(f">>> Startar Dash lokalt (port {DASH_PORT})... <<<")
     print("---------------------------------------------------------")
-    # debug=False rekommenderas vid trådanvändning för att undvika dubbla trådstartar
+    # Här kan debug vara False eller True beroende på behov vid lokal testning
     app.run_server(debug=False, port=DASH_PORT, host='0.0.0.0')

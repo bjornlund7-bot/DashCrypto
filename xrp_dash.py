@@ -512,27 +512,32 @@ def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
 
 
 ### ÄNDRING: Omdöpt och modifierad för att returnera EUR, SEK och valutaneutral 24h% ###
+
 def get_crypto_data(pair_ticker):
     """Hämtar Aktuellt pris (EUR & SEK) och 24h KPI:er."""
     eur_sek_rate = get_eur_sek_rate()
-# --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
+    
+    # --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
+    # OBS: Denna definition ligger korrekt indragen under def, men utanför try/except
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     # ----------------------------------------------------------------
 
+    # Initialisera variabler för att undvika UnboundLocalError om 'try' misslyckas
+    latest_price_eur, high_24h_eur, low_24h_eur, open_24h_eur = 0.0, 0.0, 0.0, 0.0
+    percent_change_24h = 0.0
+    
     try:
         params = {'pair': pair_ticker}
-# --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    # ----------------------------------------------------------------
-        response = requests.get(KRAKEN_TICKER_API_URL, params=params, timeout=10)
+        
+        # VIKTIGT: Lägg till headers=headers här
+        response = requests.get(KRAKEN_TICKER_API_URL, params=params, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
 
-        if data.get('error') and data['error']: return None, f"Ticker Fel: {data['error']} för {pair_ticker}"
+        if data.get('error') and data['error']: 
+            return None, f"Ticker Fel: {data['error']} för {pair_ticker}"
 
         if data.get('result'):
             kraken_pair_key = list(data['result'].keys())[0]
@@ -552,23 +557,23 @@ def get_crypto_data(pair_ticker):
 
             # 24h % (valutaneutral, baserad på EUR)
             percent_change_24h = ((latest_price_eur - open_24h_eur) / open_24h_eur) * 100 if open_24h_eur != 0 else 0
+        
+        else: 
+            return None, f"Fick ett tomt Ticker-resultat."
 
+    except Exception as e: 
+        # Här kan vi returnera direkt om ett fel inträffar
+        return None, f"Fel vid hämtning av Ticker-data: {e}"
 
-
-        else: return None, f"Fick ett tomt Ticker-resultat."
-
-    except Exception as e: return None, f"Fel vid hämtning av Ticker-data: {e}"
-
+    # Dessa rader körs endast om 'try' lyckades, eller om 'try' avslutades med 'return None, error'
+    
     # Procentuell skillnad hög och låg på 24h
-    formel2 = ((high_24h_eur - low_24h_eur) / latest_price_eur) * 100
+    formel2 = ((high_24h_eur - low_24h_eur) / latest_price_eur) * 100 if latest_price_eur != 0 else 0
 
     if formel2 is not None:
-        # OBS: Indentering och rätt variabel (formel2) och format (:.2f)
-        formel = f"{formel2:.2f}""%"
-    else: # OBS: Kolon (:) krävs här
-        # OBS: Indentering
+        formel = f"{formel2:.2f}%"
+    else: 
         formel = "N/A"
-
 
     return {
         'price_eur': latest_price_eur,
@@ -579,9 +584,10 @@ def get_crypto_data(pair_ticker):
         'high_24h_sek': high_sek,
         'low_24h_sek': low_sek,
         'open_24h_sek': open_sek,
-        'percent_change_24h': percent_change_24h, # Denna är valutaneutral
+        'percent_change_24h': percent_change_24h,
         'formel': formel,
     }, None
+
 ### SLUT PÅ ÄNDRING ###
 
 def calculate_30min_trend(pair_ticker, history_data):

@@ -310,18 +310,36 @@ def log_data_to_excel(): pass # Dummy-funktion
 @lru_cache(maxsize=1)
 def get_eur_sek_rate():
     """Hämtar aktuell EUR/SEK växelkurs. Använder 11.50 SEK som fallback."""
+    
+    # 1. Hämta URL inuti try-blocket för att fånga NameError (om URL inte är definierad)
     try:
-        response = requests.get(EXCHANGE_RATE_URL, timeout=5)
+        # Kontrollera att variabeln är definierad
+        url = EXCHANGE_RATE_URL 
+        
+        # Logga för felsökning
+        print(f"DEBUG: Försöker hämta EUR/SEK från: {url}") 
+        
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
         data = response.json()
+        
         if 'rates' in data and 'SEK' in data['rates']:
+            print("DEBUG: EUR/SEK lyckades.")
             return data['rates']['SEK']
+        
+        print("DEBUG: Kunde inte parsa EUR/SEK-data. Använder standardvärde.")
         return 11.50
-    except requests.exceptions.RequestException:
+        
+    except NameError as name_e:
+        # Fånga om EXCHANGE_RATE_URL inte är definierad globalt
+        print(f"🔴 [KRITISKT FEL] Variabeln EXCHANGE_RATE_URL är odefinierad. {name_e}")
         return 11.50
-    except Exception:
+    except requests.exceptions.RequestException as req_e:
+        print(f"🔴 [FEL] Nätverksfel vid EUR/SEK hämtning. Använder standardvärde. {req_e}")
         return 11.50
-
+    except Exception as e:
+        print(f"🔴 [FEL] Oväntat fel vid EUR/SEK hämtning. Använder standardvärde. {e}")
+        return 11.50
 ### ÄNDRING: Returnera BÅDE EUR och SEK pris ###
 
 def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):

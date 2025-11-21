@@ -66,7 +66,8 @@ CURRENCIES = ['EUR', 'SEK']
 # Inställningar för Dash
 # Ticker-data behöver uppdateras minst var 60:e sekund
 UPDATE_INTERVAL_SECONDS_DATA = 60 
-OHLC_CACHE_INTERVAL_MIN = 2 # Använd 2 minuters intervall för att få 24h historik (720 punkter)
+# Byt till 5 minuters intervall för OHLC (stöttas av Kraken). Ger 288 punkter/24h.
+OHLC_CACHE_INTERVAL_MIN = 5 
 
 # --- Redis Konfiguration ---
 REDIS_URL = os.environ.get('REDIS_URL')
@@ -200,9 +201,9 @@ def fetch_crypto_data():
         return DEFAULT_DATA
 
 def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
-    """Hämtar OHLC-data från Kraken för ett specifikt intervall (t.ex. 2 minuter)."""
+    """Hämtar OHLC-data från Kraken för ett specifikt intervall (t.ex. 5 minuter)."""
     
-    # Kraken OHLC API returnerar max 720 datapunkter per anrop
+    # intervallet måste vara ett heltal som stöds av Kraken (t.ex. 1, 5, 15, 30, 60, 240, etc.)
     params = {'pair': kraken_ticker, 'interval': interval}
         
     try:
@@ -231,7 +232,7 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
 
 def update_redis_cache(redis_instance):
     """Loop som körs i bakgrunden för att uppdatera ALL data i Redis-cachen, 
-       inklusive 2-min OHLC-historik (720 punkter/24h) för ALLA mynt."""
+       inklusive 5-min OHLC-historik (288 punkter/24h) för ALLA mynt."""
     
     # Uppdateringsintervallet sätts till 120 sekunder (2 minuter)
     UPDATE_CYCLE_SECONDS = 120 
@@ -249,14 +250,14 @@ def update_redis_cache(redis_instance):
             if redis_instance:
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 5)
             
-            # --- 2. Hämta OHLC-data (2 minuter) för ALLA mynt ---
+            # --- 2. Hämta OHLC-data (5 minuter) för ALLA mynt ---
             
-            # 2 minuters intervall för att få 24h historik i ett anrop (720 punkter)
-            ohlc_interval = 2 
+            # 5 minuters intervall, stöds av Kraken. Ger 24h historik.
+            ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
             
             for label, ticker in CRYPTO_PAIRS.items():
                 
-                # Anropar Kraken med 2-minuters intervall
+                # Anropar Kraken med 5-minuters intervall
                 ohlc_data = fetch_ohlc_data_from_kraken(ticker, interval=ohlc_interval) 
                 
                 if ohlc_data:
@@ -267,7 +268,7 @@ def update_redis_cache(redis_instance):
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_data), ex=7200) 
                     logger.debug(f"   >>> OHLC {ohlc_interval}-min sparad i cache för {ticker}")
                 
-                # VIKTIGT: Pausa 2 sekunder för att undvika rate limits (50+ anrop på 120s).
+                # VIKTIGT: Pausa 2 sekunder för att undvika rate limits.
                 time.sleep(2) 
             
             # --- Cykel avslutad ---
@@ -481,9 +482,9 @@ def update_metrics_and_graph(n, coin_symbol, currency):
     updated_text = f"Senast uppdaterad (Realtime Ticker): {time.strftime('%H:%M:%S', time.gmtime(timestamp))} UTC"
 
     
-    # 2. Hämta Historisk Data från cache (2 min intervall)
+    # 2. Hämta Historisk Data från cache (5 min intervall)
     figure = go.Figure()
-    ohlc_interval = OHLC_CACHE_INTERVAL_MIN # 2 minuter
+    ohlc_interval = OHLC_CACHE_INTERVAL_MIN # Nu 5 minuter
     kraken_ticker = CRYPTO_PAIRS[coin_label]
     
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
@@ -551,7 +552,7 @@ def update_metrics_and_graph(n, coin_symbol, currency):
 
     else:
         # Visa meddelande om historisk data saknas (om cache är tom)
-        msg = f"Laddar historisk OHLC-data (2-min intervall) för {coin_label}. Det kan ta upp till 2 minuter efter appstart."
+        msg = f"Laddar historisk OHLC-data (5-min intervall) för {coin_label}. Det kan ta upp till 2 minuter efter appstart."
         
         # Rita bara en enkel markering för det aktuella priset
         current_time = time.strftime('%H:%M:%S', time.gmtime(timestamp))

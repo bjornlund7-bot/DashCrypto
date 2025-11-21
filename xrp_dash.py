@@ -25,9 +25,9 @@ EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
 # Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
 CRYPTO_PAIRS = {
-    'XRP (Ripple)': 'XRPEUR',
-    'BTC (Bitcoin)': 'BTCEUR',
-    'ETH (Ethereum)': 'ETHEUR',
+    'XRP (Ripple)': 'XRP/EUR',
+    'BTC (Bitcoin)': 'BTC/EUR',
+    'ETH (Ethereum)': 'ETH/EUR',
     'SOL (Solana)': 'SOLEUR',
     'GRASS (Grass)': 'GRASSEUR',
     'ADA (Cardano)': 'ADAEUR',

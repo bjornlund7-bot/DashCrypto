@@ -9,6 +9,7 @@ import requests
 import json
 import logging
 from redis import from_url, exceptions
+from dash import dash_table # Behövs inte för kort-vyn men bra att ha om du byter till tabell
 
 # --- Konfiguration och Initialisering ---
 
@@ -18,6 +19,17 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
+# =========================================================================
+# === TELEGRAM Konfiguration (Hämta från Render Miljövariabler) ===
+# Se till att du ställer in dessa namn i Renders Environment Variables!
+
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    logger.warning("❌ TELEGRAM-inställningar saknas. Alerts kommer inte att fungera.")
+# =========================================================================
+
 # --- API Konstanter ---
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
@@ -25,63 +37,30 @@ EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
 # Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
 CRYPTO_PAIRS = {
-    'XRP (Ripple)': 'XRP/EUR',
-    'BTC (Bitcoin)': 'BTC/EUR',
-    'ETH (Ethereum)': 'ETH/EUR',
-    'SOL (Solana)': 'SOL/EUR',
-    'GRASS (Grass)': 'GRASS/EUR',
-    'ADA (Cardano)': 'ADA/EUR',
-    'DOT (Polkadot)': 'DOT/EUR',
-    'DOGE (Dogecoin)': 'DOGE/EUR',
-    'PUMP (PUMP)': 'PUMP/EUR',
-    'Cookie DAO': 'COOKIE/EUR',
-    'Moonwalk (MF)': 'MF/EUR', 
-    'YALA': 'YALA/EUR', 
-    'WIF (dogwifhat)': 'WIF/EUR',
-    'YFI (Yearn Finance)': 'YFI/EUR',
-    'BNB (BNB Chain)': 'BNB/EUR',
-    'TRX (Tron)': 'TRX/EUR',
-    'PEPE (Pepe)': 'PEPE/EUR',
-    'LTC (Litecoin)': 'LTC/EUR',
-    'TRUMP (Official Trump)': 'TRUMP/EUR',
-    'XTZ (Tezos)': 'XTZ/EUR',
-    'DASH (Dash)': 'DASH/EUR',
-    'ZRO (LayerZero)': 'ZRO/EUR',
-    'WOO (Woo Network)': 'WOO/EUR',
-    'GALA (Gala Games)': 'GALA/EUR',
-    'SUI (SUI)': 'SUI/EUR',
-    'BCH (Bitcoin Cash)': 'BCH/EUR',
-    'ATOM (Cosmos)': 'ATOM/EUR',
-    'AVAX (Avalanche)': 'AVAX/EUR',
-    'ICP (Internet Computer Protocol)': 'ICP/EUR',
-    'ZEC (Zcash)': 'ZEC/EUR',
-    '0G (ZeroGravity)': '0G/EUR', 
-    'XDC (XDC Network)': 'XDC/EUR',
-    'UNI (Uniswap)': 'UNI/EUR',
-    'IP (Story)': 'IP/EUR',
-    'INJ (Injective)': 'INJ/EUR',
-    'AR (Arweave)': 'AR/EUR',
-    'EGLD (MultiversX)': 'EGLD/EUR',
-    'LPT (LivePeer)': 'LPT/EUR',
-    'KSM (Kusama)': 'KSM/EUR',
-    'EUL (Euler)': 'EUL/EUR',
-    'GMX (GMX)': 'GMX/EUR',
-    'AUCTION (Bounce)': 'AUCTION/EUR',
-    'MOVR (Moonriver)': 'MOVR/EUR',
-    'SSV (SSV Network)': 'SSV/EUR',
-    'MLN (Enzyme Finance)': 'MLN/EUR',
-    'ALCX (Alchemix)': 'ALCX/EUR',
-    'AERO (Aerodrome Finance)': 'AERO/EUR',
-    'MYX (MYX Finance)': 'MYX/EUR',
-    'GNO (Gnosis)': 'GNO/EUR',
+    'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR', 
+    'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR', 
+    'DOT (Polkadot)': 'DOT/EUR', 'DOGE (Dogecoin)': 'DOGE/EUR', 'PUMP (PUMP)': 'PUMP/EUR', 
+    'Cookie DAO': 'COOKIE/EUR', 'Moonwalk (MF)': 'MF/EUR', 'YALA': 'YALA/EUR', 
+    'WIF (dogwifhat)': 'WIF/EUR', 'YFI (Yearn Finance)': 'YFI/EUR', 'BNB (BNB Chain)': 'BNB/EUR', 
+    'TRX (Tron)': 'TRX/EUR', 'PEPE (Pepe)': 'PEPE/EUR', 'LTC (Litecoin)': 'LTC/EUR', 
+    'TRUMP (Official Trump)': 'TRUMP/EUR', 'XTZ (Tezos)': 'XTZ/EUR', 'DASH (Dash)': 'DASH/EUR', 
+    'ZRO (LayerZero)': 'ZRO/EUR', 'WOO (Woo Network)': 'WOO/EUR', 'GALA (Gala Games)': 'GALA/EUR', 
+    'SUI (SUI)': 'SUI/EUR', 'BCH (Bitcoin Cash)': 'BCH/EUR', 'ATOM (Cosmos)': 'ATOM/EUR', 
+    'AVAX (Avalanche)': 'AVAX/EUR', 'ICP (Internet Computer Protocol)': 'ICP/EUR', 
+    'ZEC (Zcash)': 'ZEC/EUR', '0G (ZeroGravity)': '0G/EUR', 'XDC (XDC Network)': 'XDC/EUR', 
+    'UNI (Uniswap)': 'UNI/EUR', 'IP (Story)': 'IP/EUR', 'INJ (Injective)': 'INJ/EUR', 
+    'AR (Arweave)': 'AR/EUR', 'EGLD (MultiversX)': 'EGLD/EUR', 'LPT (LivePeer)': 'LPT/EUR', 
+    'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR', 
+    'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR', 
+    'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR', 
+    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
 }
+
 DEFAULT_PAIR_KEY = 'XRP (Ripple)' # Standardval för dropdown
 
 # Extrahera symboler och tickers
 COINS_LABELS = list(CRYPTO_PAIRS.keys())
-# Skapar en lista med symboler: ['XRP', 'BTC', 'ETH', ...]
 COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
-# Skapar en mappning från symbol till full label: {'XRP': 'XRP (Ripple)', ...}
 SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
 
 CURRENCIES = ['EUR', 'SEK']
@@ -113,13 +92,43 @@ DEFAULT_DATA = {
 }
 
 
-# --- Telegram Mock-funktion ---
+# --- Telegram Utskick Funktion ---
 
-def mock_telegram_send(coin_label, price, currency, threshold):
-    """Simulerar utskick av Telegram-notis."""
-    logger.info(f"--- TELEGRAM MOCK: Alert! {coin_label} ({currency}) nådde gränsvärde {threshold:.4f}. Nuvarande pris: {price:.4f} ---")
-    # I en verklig app skulle detta anropa en bot API.
-    pass
+def send_telegram_alert(coin_label, price, currency, threshold):
+    """Skickar en Telegram-notis via bot API."""
+    
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.error("Kan inte skicka Telegram-meddelande: Bot Token eller Chat ID saknas.")
+        return False
+        
+    # Formatera meddelandet
+    # Notera: Vi använder inte f-strängar här för att hantera formateringen (kommatering)
+    # Låter telegram-meddelandet vara enkelt, men du kan formatera om du vill.
+    message = (
+        f"🚨 Krypto Alert: Prisgräns nådd! 🚨\n\n"
+        f"Valuta: {coin_label}\n"
+        f"Gränsvärde: {threshold:,.4f} {currency}\n"
+        f"Nuvarande pris: {price:,.4f} {currency}\n"
+        f"Tid: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC"
+    )
+
+    telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    try:
+        response = requests.post(telegram_api_url, data={
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }, timeout=10)
+        
+        response.raise_for_status() # Kasta ett fel för dåliga statuskoder (4xx eller 5xx)
+        
+        logger.info(f"✅ Telegram-meddelande skickat: {coin_label} till {TELEGRAM_CHAT_ID}")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Fel vid utskick till Telegram: {e}. Svar: {response.text if 'response' in locals() else 'Inget svar'}")
+        return False
 
 # --- API Data Hämtning ---
 
@@ -164,12 +173,40 @@ def fetch_crypto_data():
         # 3. Bearbeta och lagra data
         current_data = {'timestamp': t, 'EUR_SEK_RATE': sek_rate}
         
+        # Byt ut 'result' nyckeln för att matcha Kraksens output
+        result_key = kraken_data.get('result', {})
+        
         for label, ticker in CRYPTO_PAIRS.items():
             coin_symbol = label.split(' ')[0]
             
-            # Hitta data i Kraksens svar (tickern är nyckeln)
-            coin_info = kraken_data['result'].get(ticker)
+            # Hitta data i Kraksens svar (tickern är nyckeln, t.ex. 'XXRPZEUR' om 'XRP/EUR' skickades)
+            # Vi måste normalisera tickernamn som Kraken returnerar (tar bort Z, X, etc.)
+            # Enklaste sättet att hantera detta är att iterera över CRYPTO_PAIRS.values()
             
+            # Hitta Kraksens standardiserade ticker-namn i resultatet (t.ex. XETHZEUR)
+            kraken_key = None
+            for key in result_key:
+                # En enkel (men inte 100% idiotsäker) metod: kolla om EUR-symbolen finns i Kraksens key
+                # T.ex. om ticker är 'BTC/EUR', och key är 'XXBTZEUR'
+                if ticker.replace('/', 'Z').replace('EUREUR', 'EUR') in key: 
+                     kraken_key = key
+                     break
+            
+            # Ännu enklare (och mer robust) metod: Använd den skickade tickern 'XRP/EUR' och kolla i resultatet
+            # Men den faktiska nyckeln i resultatet är ofta Kraken-specifik (t.ex. XXRPZEUR)
+            
+            # Vi återgår till den robusta metoden: hitta den faktiska Kraken-nyckeln (t.ex. 'XETHZEUR') i resultatet
+            # för att undvika KeyError. Det bästa sättet att hämta Kraksens nyckel är:
+            
+            coin_info = result_key.get(ticker) # Försök med den skickade tickern
+            if coin_info is None:
+                 # Om inte hittad, försök hitta den dynamiska nyckeln
+                 for key, info in result_key.items():
+                     if info.get('altname') == coin_symbol: # Kraksens altname (fungerar ofta)
+                         coin_info = info
+                         break
+            
+            # Om vi hittar datan:
             if coin_info:
                 # 'c' står för last trade closed (price and volume)
                 try:
@@ -178,7 +215,7 @@ def fetch_crypto_data():
                     
                     current_data[f'{coin_symbol}/EUR'] = price_eur
                     current_data[f'{coin_symbol}/SEK'] = price_sek
-                except (ValueError, IndexError) as e:
+                except (ValueError, IndexError, TypeError) as e:
                     logger.warning(f"Failed to parse price for {ticker}: {e}")
             else:
                 logger.warning(f"Kraken data missing for ticker: {ticker}")
@@ -212,7 +249,6 @@ def update_redis_cache(redis_instance):
                 redis_instance.set('crypto_data', data_json, ex=UPDATE_INTERVAL_SECONDS_DATA) 
                 
                 timestamp_str = time.strftime("%H:%M:%S", time.gmtime(new_data['timestamp']))
-                # Logga ett representativt värde, t.ex. BTC/EUR
                 btc_eur_price = new_data.get('BTC/EUR', 'N/A')
                 logger.debug(f"✅ Data sparad i Redis. BTC/EUR: {btc_eur_price}. Uppdaterad: {timestamp_str} UTC")
             else:
@@ -236,7 +272,9 @@ app = dash.Dash(__name__, external_stylesheets=[
 ])
 server = app.server
 
-# Förbättrad Layout med bättre styling (kortbaserad design)
+
+
+# Förbättrad Layout
 app.layout = html.Div(style={
     'backgroundColor': '#f8f9fa', 
     'minHeight': '100vh', 
@@ -245,7 +283,7 @@ app.layout = html.Div(style={
 }, children=[
     
     html.Div(style={
-        'maxWidth': '700px',
+        'maxWidth': '1400px',
         'margin': '40px auto',
         'padding': '30px',
         'borderRadius': '12px',
@@ -256,14 +294,13 @@ app.layout = html.Div(style={
         
         html.H1('📈 MTS Krypto Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
 
-        # Valutaväljare (Coin and Currency Selectors)
+        # Valutaväljare
         html.Div(style={'display': 'flex', 'justifyContent': 'center', 'gap': '20px', 'alignItems': 'center', 'marginBottom': '30px'}, children=[
             
             html.Div(style={'flexGrow': 1, 'maxWidth': '300px'}, children=[
                 html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
                 dcc.Dropdown(
                     id='coin-dropdown',
-                    # Uppdaterade options för att visa fullständiga namn, men skicka symbolen som värde
                     options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS],
                     value=DEFAULT_PAIR_KEY.split(' ')[0], # Standardvärde (t.ex. 'XRP')
                     clearable=False,
@@ -301,7 +338,7 @@ app.layout = html.Div(style={
         html.Div(style={'marginTop': '40px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
             html.H3('🔔 Telegram Alert-inställningar', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '15px'}),
             
-            html.P("Simulera en notis när priset når eller överstiger ditt angivna gränsvärde."),
+            html.P("Skickar notis när priset når eller överstiger ditt angivna gränsvärde."),
             
             html.Div(style={'display': 'flex', 'gap': '10px', 'alignItems': 'center'}, children=[
                 dcc.Input(
@@ -322,6 +359,25 @@ app.layout = html.Div(style={
             ]),
             html.Div(id='alert-output', style={'marginTop': '10px', 'fontSize': '0.9em', 'minHeight': '20px'})
         ]),
+
+        # --- Sammanfattningssektion för ALL KRYPTO (Kort-vy) ---
+        html.Div(style={'marginTop': '50px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
+            html.H3('📊 Sammanfattning av alla valutor', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '20px'}),
+            
+            dcc.Loading(
+                id="loading-2",
+                type="dot",
+                children=[
+                    html.Div(id='crypto-summary', style={
+                        'display': 'flex',
+                        'flexWrap': 'wrap', 
+                        'gap': '15px',      
+                        'justifyContent': 'flex-start'
+                    })
+                ]
+            )
+        ]),
+        
     ]),
 
     # Intervallkomponent för att uppdatera frontend (var 5:e sekund)
@@ -350,9 +406,7 @@ def get_data_from_redis():
     return None
 
 def fetch_ohlc_data(kraken_ticker, interval=OHLC_INTERVAL_MIN):
-    """Hämtar historisk OHLC-data från Kraken (max 720 punkter för 5 min intervall)."""
-    # Vi hämtar OHLC-data direkt här, istället för i bakgrundstråden, eftersom det beror på användarens valda mynt.
-    # interval=5 är 5 minuter
+    """Hämtar historisk OHLC-data från Kraken."""
     params = {'pair': kraken_ticker, 'interval': interval}
         
     try:
@@ -414,13 +468,13 @@ def update_metrics_and_graph(n, coin_symbol, currency):
         return price_text, updated_text, figure
     
     # 3. Formatera priset
-    # Högre precision för lågvärdesmynt
     if current_price < 10:
-        price_format = f"{current_price:.4f}"
-    # Standard formatering för högvärdesmynt
+        price_format = f"{current_price:,.4f}"
     else:
-        # Ersätter punkt med komma för decimaler, och lägger till tusentalsavgränsare (space)
-        price_format = f"{current_price:,.2f}".replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
+        price_format = f"{current_price:,.2f}"
+        
+    # Ersätter punkt med komma för decimaler, och lägger till tusentalsavgränsare (space)
+    price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
 
     # Hitta fullständigt namn för visning
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
@@ -514,12 +568,86 @@ def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
 
     if current_price >= threshold_val:
         # Priset har nått/överskridit gränsvärdet
-        mock_telegram_send(coin_label, current_price, currency, threshold_val)
-        return html.Span(f"🔔 ALERT AKTIVERAD: {coin_label} är nu {current_price:.4f} {currency}. Telegram-meddelande simulerat!", style={'color': '#28a745', 'fontWeight': 'bold'})
+        success = send_telegram_alert(coin_label, current_price, currency, threshold_val)
+        
+        if success:
+            return html.Span(f"🔔 ALERT AKTIVERAD: {coin_label} är nu {current_price:.4f} {currency}. Telegram-meddelande skickat!", style={'color': '#28a745', 'fontWeight': 'bold'})
+        else:
+            return html.Span("❌ ALERT: Kunde inte skicka Telegram-meddelande. Kontrollera loggarna.", style={'color': '#dc3545', 'fontWeight': 'bold'})
     else:
         # Priset är fortfarande under gränsvärdet
         return html.Span(f"✅ Alert satt för {coin_label} > {threshold_val} {currency}. Nuvarande pris: {current_price:.4f}.", style={'color': '#495057'})
 
+# --- Callback för Krypto Sammanfattning (Kort-vy) ---
+
+@app.callback(Output('crypto-summary', 'children'),
+              [Input('interval-component', 'n_intervals'),
+               Input('currency-dropdown', 'value')])
+def update_crypto_summary_cards(n, currency):
+    data = get_data_from_redis()
+    
+    if data is None or len(data) <= 2:
+        return html.Div("Laddar kryptoöversikt...", style={'textAlign': 'center', 'width': '100%', 'color': '#6c757d', 'padding': '20px'})
+
+    eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
+    
+    # Lista för att hålla alla kort
+    summary_cards = []
+    
+    # Stil för ett enskilt kort
+    card_style = {
+        'flex': '0 1 calc(25% - 15px)', # Visa 4 kort per rad
+        'minWidth': '200px',
+        'padding': '15px',
+        'border': '1px solid #e0e0e0',
+        'borderRadius': '8px',
+        'backgroundColor': '#ffffff',
+        'boxShadow': '0 2px 4px rgba(0, 0, 0, 0.05)',
+    }
+    
+    for label in COINS_LABELS:
+        coin_symbol = label.split(' ')[0]
+        price_eur = data.get(f'{coin_symbol}/EUR')
+        
+        price_status_style = {'color': '#6c757d', 'fontWeight': 'normal'} 
+        
+        if price_eur is not None:
+            # Beräkna priset i vald valuta
+            if currency == 'SEK':
+                current_price = price_eur * eur_to_sek
+            else:
+                current_price = price_eur
+                
+            # Formatera strängen med svensk decimalformat (komma)
+            if current_price < 10:
+                price_format = f"{current_price:,.4f}"
+            else:
+                price_format = f"{current_price:,.2f}"
+                
+            # Ersätter punkt med komma för decimaler, och lägger till tusentalsavgränsare (space)
+            formatted_price = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
+            
+            price_text = f"{formatted_price} {currency}"
+            price_status_style['color'] = '#28a745' 
+            price_status_style['fontWeight'] = 'bold'
+        else:
+            price_text = "N/A"
+            price_status_style['color'] = '#dc3545' 
+            
+        
+        # Skapa kortet
+        card = html.Div(style=card_style, children=[
+            html.P(label, style={'margin': '0 0 5px 0', 'fontSize': '1.1em', 'fontWeight': '500', 'color': '#0056b3'}),
+            html.P(price_text, style={'margin': '0', 'fontSize': '1.4em'} | price_status_style),
+        ])
+        summary_cards.append(card)
+
+    return summary_cards
+
+
 if __name__ == '__main__':
-    # Detta block används endast för lokal utveckling
+    # Detta block används endast för lokal utveckling (kör app.run_server)
+    # Observera: Render kommer att använda 'gunicorn' för att starta 'server', inte detta block.
+    # För lokal körning, avkommentera raden nedan och lägg till app.run_server(debug=True)
+    # app.run_server(debug=True) 
     pass

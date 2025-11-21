@@ -468,6 +468,13 @@ def get_eur_sek_rate():
 
 ### ÄNDRING: Returnera BÅDE EUR och SEK pris ###
 def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
+
+# --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    # ----------------------------------------------------------------
+
     """Hämtar historiskt slutpris (stängningspris) från Kraken OHLC API."""
     since_time = datetime.now() - timedelta(days=since_days_ago)
     since_unix = int((since_time - timedelta(days=10)).timestamp())
@@ -508,6 +515,12 @@ def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
 def get_crypto_data(pair_ticker):
     """Hämtar Aktuellt pris (EUR & SEK) och 24h KPI:er."""
     eur_sek_rate = get_eur_sek_rate()
+# --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    # ----------------------------------------------------------------
+
     try:
         params = {'pair': pair_ticker}
         response = requests.get(KRAKEN_TICKER_API_URL, params=params, timeout=10)
@@ -844,6 +857,20 @@ def background_data_collector():
     
     # Lokal räknare för OHLC/Excel-loggning
     local_interval_counter = 0
+
+# ... inne i for-loopen ...
+            # 1. Hämta Ticker-data
+            ticker_data, error = get_crypto_data(pair_ticker)
+
+            if error:
+                # SE TILL ATT DETTA SYNS I LOGGEN:
+                print(f"🔴 [FEL] Kunde inte hämta data för {pair_ticker}: {error}")
+                continue
+            else:
+                # BEKRÄFTELSE PÅ ATT VI FICK DATA:
+                print(f"🟢 [OK] Hämtade data för {pair_ticker}: {ticker_data['price_eur']}")
+
+
 
     print("---------------------------------------------------------")
     print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")

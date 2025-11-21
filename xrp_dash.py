@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
+# Säkerställ att miljövariabler är satta för drift på Render
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -95,44 +96,18 @@ def get_data_from_redis():
     """Hämtar data från Redis cache."""
     if r:
         try:
-            all_symbols = [coin.split(' ')[0] for coin in COINS_LABELS]
-            price_keys = [f'{s}/{c}' for s in all_symbols for c in CURRENCIES]
-            
-            ohlc_keys_to_fetch = [
-                f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{pair}' 
-                for pair in CRYPTO_PAIRS.values()
-            ]
-            
-            keys_to_fetch = ['EUR_SEK_RATE', 'timestamp', 'ALL_24H_RANGE', 'ALL_PERCENT_CHANGE'] + price_keys + ohlc_keys_to_fetch
-            
-            pipe = r.pipeline()
-            for key in keys_to_fetch:
-                pipe.get(key)
-            
-            results = pipe.execute()
-            
-            data = {}
-            for key, value in zip(keys_to_fetch, results):
-                if value:
-                    if key in ['ALL_24H_RANGE', 'ALL_PERCENT_CHANGE'] or key.startswith(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_'):
-                        try:
-                            data[key] = json.loads(value.decode('utf-8'))
-                        except json.JSONDecodeError:
-                            data[key] = {}
-                    elif key == 'timestamp':
-                        data[key] = float(value.decode('utf-8'))
-                    else:
-                        try:
-                            data[key] = float(value.decode('utf-8'))
-                        except ValueError:
-                            data[key] = None 
-            return data
+            cached_data = r.get('crypto_data')
+            if cached_data:
+                return json.loads(cached_data)
+            else:
+                return None
         except exceptions.ConnectionError as e:
             logger.error(f"Redis-anslutningsfel i callback: {e}")
             return None
     return None
 
 def send_telegram_alert(coin_label, price, currency, threshold):
+    """Skickar ett meddelande via Telegram-bot."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error("Kan inte skicka Telegram-meddelande: Bot Token eller Chat ID saknas.")
         return False
@@ -153,14 +128,17 @@ def send_telegram_alert(coin_label, price, currency, threshold):
             'text': message,
             'parse_mode': 'Markdown'
         }, timeout=10)
+        
         response.raise_for_status() 
         logger.info(f"✅ Telegram-meddelande skickat: {coin_label}")
         return True
+        
     except requests.exceptions.RequestException as e:
         logger.error(f"❌ Fel vid utskick till Telegram: {e}")
         return False
 
 def fetch_exchange_rate():
+    """Hämtar EUR till SEK växelkurs."""
     try:
         response = requests.get(EXCHANGE_RATE_URL, timeout=10)
         response.raise_for_status()
@@ -172,6 +150,7 @@ def fetch_exchange_rate():
         return 11.0
 
 def fetch_crypto_data():
+    """Hämtar realtids Ticker och 24h data från Kraken."""
     try:
         t = time.time()
         sek_rate = fetch_exchange_rate()
@@ -250,7 +229,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
     """Beräknar procentuell förändring baserat på historisk OHLC-data."""
     changes = {}
     if not ohlc_data or current_price is None or current_price == 0:
-        return {key: None for key in periods}
+        return {key: 0.0 for key in periods}
 
     for period, config in periods.items():
         blocks = config['blocks']
@@ -262,7 +241,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
             else:
                 changes[period] = 0.0
         else:
-            changes[period] = None 
+            changes[period] = 0.0 
     return changes
 
 def calculate_trendline(historical_data, blocks):
@@ -277,24 +256,15 @@ def calculate_trendline(historical_data, blocks):
 
 def format_change(c):
     """Global format funktion."""
-    if c is None: 
+    if c is None or c == 0.0: 
         return html.Span("N/A", style={'color': '#6c757d'})
     color = '#10b981' if c > 0 else '#ef4444'
     symbol = '▲' if c > 0 else '▼'
-    if c == 0.0:
-        color = '#6c757d'
-        symbol = '-'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
-
-def format_price(p):
-    """Global prisformatteringsfunktion."""
-    if p is None: return "N/A"
-    price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
-    return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
 
 # --- Bakgrundstrådens Logik ---
 def update_redis_cache(redis_instance):
-    """Uppdaterar all krypto- och OHLC-data i Redis."""
+    """Uppdaterar all krypto- och OHLC-data i Redis var 120:e sekund."""
     UPDATE_CYCLE_SECONDS = 120 
     
     while True:
@@ -303,23 +273,12 @@ def update_redis_cache(redis_instance):
         try:
             logger.debug("--- Bakgrundstråd: Startar uppdateringscykel ---")
             
-            # 1. Hämta realtidsdata
             new_data = fetch_crypto_data()
-            
             if redis_instance:
-                try:
-                    old_data_json = redis_instance.get('crypto_data')
-                    if old_data_json:
-                        old_data = json.loads(old_data_json)
-                        if 'ALL_PERCENT_CHANGE' in old_data:
-                            new_data['ALL_PERCENT_CHANGE'] = old_data['ALL_PERCENT_CHANGE']
-                except:
-                    pass 
-                
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
                 logger.debug("✅ Prisdata (Ticker) sparad snabbt.")
 
-            all_percent_changes = new_data.get('ALL_PERCENT_CHANGE', {})
+            all_percent_changes = {} 
             
             for label, ticker in CRYPTO_PAIRS.items():
                 coin_symbol = label.split(' ')[0]
@@ -329,7 +288,6 @@ def update_redis_cache(redis_instance):
                     time.sleep(1) 
                     continue
                 
-                # A. Hämta 5-min OHLC
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
@@ -341,7 +299,6 @@ def update_redis_cache(redis_instance):
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                     logger.debug(f"   >>> OHLC 5-min sparad för {ticker}")
                     
-                # B. Hämta 1-dag OHLC
                 periods_ago_30d = 2592000 
                 ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
                 long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
@@ -350,12 +307,13 @@ def update_redis_cache(redis_instance):
                 percent_changes.update(long_term_changes)
                 all_percent_changes[coin_symbol] = percent_changes
                 
-                # VIKTIGT: Spara inkrementellt!
-                new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
-                if redis_instance:
-                    redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
-                
-                time.sleep(2) # Pausa för rate limits
+                time.sleep(2) 
+            
+            new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
+            
+            if redis_instance:
+                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
+                logger.debug("✅ Hela 'crypto_data' inkl procentrörelser sparad.")
             
             cycle_duration = time.time() - cycle_start_time
             time_to_sleep = UPDATE_CYCLE_SECONDS - cycle_duration
@@ -439,12 +397,15 @@ def update_all_live_data(n, coin_symbol, currency):
         price_text = f"❌ Pris för {coin_symbol}/{currency} saknas."
         updated_text = "Data saknas."
     else:
-        price_text = html.Span(f"{coin_label}: {format_price(current_price_display_currency)} {currency}", style={'color': '#0056b3' if current_price_eur else '#dc3545'})
+        price_format = f"{current_price_display_currency:,.4f}" if current_price_display_currency < 10 else f"{current_price_display_currency:,.2f}"
+        price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
+        price_text = html.Span(f"{coin_label}: {price_format} {currency}", style={'color': '#0056b3' if current_price_eur else '#dc3545'})
         updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.localtime(timestamp))} Lokal tid (CET/CEST)"
     
     # HÄMTA GRAFDATA
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
+    # FIX: Använd EXAKT samma nyckel som sparas (med snedstreck)
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
     
     historical_data_json = r.get(ohlc_cache_key) if r else None
@@ -500,6 +461,7 @@ def update_all_live_data(n, coin_symbol, currency):
     
     # Sammanfattningskort
     all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) 
+    # FIX: Hämta all_24h_range här för att undvika NameError
     all_24h_range = data.get('ALL_24H_RANGE', {})
     summary_cards = []
     card_style = {'flex': '0 1 calc(25% - 15px)', 'minWidth': '200px', 'padding': '15px', 'border': '1px solid #e0e0e0', 'borderRadius': '8px', 'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)'}
@@ -508,6 +470,7 @@ def update_all_live_data(n, coin_symbol, currency):
     for label in COINS_LABELS:
         coin_symbol_loop = label.split(' ')[0]
         price_eur = data.get(f'{coin_symbol_loop}/EUR')
+        # Använd den lokalt hämtade variabeln
         range_data = all_24h_range.get(coin_symbol_loop, {})
         percent_data = all_percent_changes.get(coin_symbol_loop, {})
         high_24h_eur = range_data.get('high_eur')
@@ -527,6 +490,11 @@ def update_all_live_data(n, coin_symbol, currency):
                 current_price_loop = price_eur
                 high_24h = high_24h_eur
                 low_24h = low_224h_eur
+                
+            def format_price(p):
+                if p is None: return "N/A"
+                price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
+                return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
             
             formatted_price = format_price(current_price_loop)
             formatted_high = format_price(high_24h)

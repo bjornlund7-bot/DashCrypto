@@ -293,6 +293,7 @@ def calculate_trendline(historical_data, blocks):
 # --- Bakgrundstrådens Logik (Fullständig Cache) ---
 def update_redis_cache(redis_instance):
     """Uppdaterar all krypto- och OHLC-data i Redis var 120:e sekund."""
+    # Sätt denna till 120 sekunder för att minska antalet API-anrop.
     UPDATE_CYCLE_SECONDS = 120 
     
     while True:
@@ -369,7 +370,7 @@ app = dash.Dash(__name__, external_stylesheets=[
 ])
 server = app.server # Denna variabel används av Gunicorn/Render
 
-# --- Dash Applikation Layout (oförändrad) ---
+# --- Dash Applikation Layout ---
 app.layout = html.Div(style={
     'backgroundColor': '#f8f9fa', 
     'minHeight': '100vh', 
@@ -472,14 +473,14 @@ app.layout = html.Div(style={
 
     dcc.Interval(
         id='interval-component',
-        interval=5*1000, 
+        interval=120*1000, # Uppdateras var 120:e sekund (2 minuter)
         n_intervals=0
     )
 ])
 
 
 # --- Callback för ALL LIVE-DATA (Pris, Tid, Graf, Sammanfattning) ---
-# ANVÄNDER DEN REVIDERADE CALLBACK-SYNTAXEN FÖR STABILITET I PRODUKTION
+# Denna kombinerade callback löser KeyErrors i produktionsmiljön.
 @app.callback(
     Output('current-price', 'children'),
     Output('last-updated', 'children'),

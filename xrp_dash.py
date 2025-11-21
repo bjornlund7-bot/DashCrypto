@@ -380,16 +380,64 @@ def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
 ### ÄNDRING: Omdöpt och modifierad för att returnera EUR, SEK och valutaneutral 24h% ###
 
 def get_crypto_data(pair_ticker):
-    """Hämtar Aktuellt pris (EUR & SEK) och 24h KPI:er."""
-    eur_sek_rate = get_eur_sek_rate()
+    """Hämtar Aktuellt pris (EUR & SEK) och 24h KPI:er. Inkluderar robust felhantering."""
     
-    # --- NYTT: Headers för att lura Kraken att vi är en webbläsare ---
-    # OBS: Denna definition ligger korrekt indragen under def, men utanför try/except
+    # 1. Valutakurs
+    # Antar att denna funktion (get_eur_sek_rate) är definierad någon annanstans
+    eur_sek_rate = get_eur_sek_rate() 
+    
+    # 2. Headers för API-anrop
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
-    # ----------------------------------------------------------------
+    
+    API_URL = f"https://api.kraken.com/0/public/Ticker?pair={pair_ticker}"
+    
+    # --- KRITISK TRY/EXCEPT FÖR ATT FÅNGA NÄTVERK- OCH PARSNINGSFEL ---
+    try:
+        # 3. Gör API-anropet med en timeout
+        response = requests.get(API_URL, headers=headers, timeout=10)
+        
+        # Kastar ett undantag för 4xx/5xx fel
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Kontrollera om Kraken returnerade ett fel
+        if data.get('error'):
+            kraken_error = ", ".join(data['error'])
+            return None, f"Kraken API-fel: {kraken_error}"
 
+        # 4. Parsning (ANPASSAS AV DIG)
+        result_key = list(data['result'].keys())[0]
+        ticker = data['result'][result_key]
+        
+        # --- Din parsningslogik bör se ut ungefär så här ---
+        current_price_eur = float(ticker['c'][0])
+        percent_change_24h = float(ticker['p'][1]) # Antag att det här är 24h change
+        high_24h_eur = float(ticker['h'][1])
+        low_24h_eur = float(ticker['l'][1])
+
+        # 5. Konvertera till SEK och skapa returobjekt
+        ticker_data = {
+            'price_eur': current_price_eur,
+            'price_sek': current_price_eur * eur_sek_rate,
+            'percent_change_24h': percent_change_24h,
+            'high_24h_eur': high_24h_eur,
+            'low_24h_eur': low_24h_eur,
+            'high_24h_sek': high_24h_eur * eur_sek_rate,
+            'low_24h_sek': low_24h_eur * eur_sek_rate,
+            # Lägg till andra KPI:er du använder
+        }
+        
+        return ticker_data, None # Ingen fel
+        
+    except requests.exceptions.RequestException as req_err:
+        # Fångar nätverksfel (timeout, DNS-fel, anslutningsfel)
+        return None, f"Nätverksfel vid API-anrop: {req_err}"
+    except Exception as e:
+        # Fångar alla andra fel (JSONDecodeError, KeyError vid parsing)
+        return None, f"Allmänt fel i get_crypto_data: {type(e).__name__}: {e}"
     # Initialisera variabler för att undvika UnboundLocalError om 'try' misslyckas
     latest_price_eur, high_24h_eur, low_24h_eur, open_24h_eur = 0.0, 0.0, 0.0, 0.0
     percent_change_24h = 0.0

@@ -9,7 +9,6 @@ import requests
 import json
 import logging
 from redis import from_url, exceptions
-# from dash import dash_table # Oanvänd, kan tas bort
 
 # --- Konfiguration och Initialisering ---
 
@@ -54,8 +53,8 @@ CRYPTO_PAIRS = {
     'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
 }
 
-DEFAULT_PAIR_KEY = 'XRP (Ripple)' # Standardval för dropdown
-STANDARD_TICKER = CRYPTO_PAIRS[DEFAULT_PAIR_KEY] # T.ex. 'XRP/EUR'
+DEFAULT_PAIR_KEY = 'XRP (Ripple)' 
+STANDARD_TICKER = CRYPTO_PAIRS[DEFAULT_PAIR_KEY] 
 
 # Extrahera symboler och tickers
 COINS_LABELS = list(CRYPTO_PAIRS.keys())
@@ -65,8 +64,9 @@ SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
 CURRENCIES = ['EUR', 'SEK']
 
 # Inställningar för Dash
-UPDATE_INTERVAL_SECONDS_DATA = 60 # Data hämtas i bakgrundstråd var 60:e sekund
-OHLC_INTERVAL_MIN = 5 # Använd 5 minuters intervall för grafen
+# Ticker-data behöver uppdateras minst var 60:e sekund
+UPDATE_INTERVAL_SECONDS_DATA = 60 
+OHLC_CACHE_INTERVAL_MIN = 2 # Använd 2 minuters intervall för att få 24h historik (720 punkter)
 
 # --- Redis Konfiguration ---
 REDIS_URL = os.environ.get('REDIS_URL')
@@ -88,14 +88,13 @@ DEFAULT_DATA = {
     'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
     'timestamp': time.time(),
     'EUR_SEK_RATE': 11.0, 
-    'OHLC_5MIN': [], # Nyckel för cachelagrad OHLC-data (behålls för standardval)
-    'RANGE_24H': {'high': None, 'low': None} # Nyckel för cachelagrad 24h range
+    'ALL_24H_RANGE': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}}
 }
 
 # --- Telegram Utskick Funktion ---
+
 def send_telegram_alert(coin_label, price, currency, threshold):
-    """Skickar en Telegram-notis via bot API. (Oförändrad)"""
-    # ... (Din befintliga kod för send_telegram_alert)
+    """Skickar en Telegram-notis via bot API."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error("Kan inte skicka Telegram-meddelande: Bot Token eller Chat ID saknas.")
         return False
@@ -125,10 +124,11 @@ def send_telegram_alert(coin_label, price, currency, threshold):
     except requests.exceptions.RequestException as e:
         logger.error(f"❌ Fel vid utskick till Telegram: {e}. Svar: {response.text if 'response' in locals() else 'Inget svar'}")
         return False
-# --- API Data Hämtning (OHLC för Cache) ---
+
+# --- API Data Hämtning Funktioner ---
 
 def fetch_exchange_rate():
-    """Hämtar EUR/SEK växelkurs från ExchangeRate-API. (Oförändrad)"""
+    """Hämtar EUR/SEK växelkurs."""
     try:
         response = requests.get(EXCHANGE_RATE_URL, timeout=10)
         response.raise_for_status()
@@ -156,16 +156,15 @@ def fetch_crypto_data():
         result_key = kraken_data.get('result', {})
         current_data = {'timestamp': t, 'EUR_SEK_RATE': sek_rate}
         
-        # Ny dictionary för att lagra 24h range för alla mynt
         current_data['ALL_24H_RANGE'] = {} 
         
         for label, ticker in CRYPTO_PAIRS.items():
             coin_symbol = label.split(' ')[0]
             coin_info = result_key.get(ticker)
             
+            # Hantera fall där Kraken använder alternativt namn (ofta kapitaliserad symbol)
             if coin_info is None:
-                # Fallback för tickers som har ett annat namn
-                for key, info in result_key.items():
+                 for key, info in result_key.items():
                     if info.get('altname') == coin_symbol:
                         coin_info = info
                         break
@@ -173,8 +172,9 @@ def fetch_crypto_data():
             if coin_info:
                 try:
                     price_eur = float(coin_info['c'][0])
-                    high_24h_eur = float(coin_info['h'][0]) # [0] är 24h high
-                    low_24h_eur = float(coin_info['l'][0])  # [0] är 24h low
+                    # Ticker API ger 24h high [0] och 24h low [0]
+                    high_24h_eur = float(coin_info['h'][0]) 
+                    low_24h_eur = float(coin_info['l'][0])  
                     
                     current_data[f'{coin_symbol}/EUR'] = price_eur
                     current_data[f'{coin_symbol}/SEK'] = price_eur * sek_rate
@@ -187,7 +187,7 @@ def fetch_crypto_data():
                 except (ValueError, IndexError, TypeError) as e:
                     logger.warning(f"Failed to parse Ticker data (price/range) for {ticker}: {e}")
             
-        if len(current_data) > 3: # Se till att det finns mer än timestamp, rate och ALL_24H_RANGE
+        if len(current_data) > 3: 
             return current_data
         else:
             return DEFAULT_DATA
@@ -200,8 +200,9 @@ def fetch_crypto_data():
         return DEFAULT_DATA
 
 def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
-    """Hämtar OHLC-data från Kraken. Används ENDAST av bakgrundstråden (för att rita grafen för standardvalet)."""
-    # ... (Din befintliga kod för fetch_ohlc_data_from_kraken)
+    """Hämtar OHLC-data från Kraken för ett specifikt intervall (t.ex. 2 minuter)."""
+    
+    # Kraken OHLC API returnerar max 720 datapunkter per anrop
     params = {'pair': kraken_ticker, 'interval': interval}
         
     try:
@@ -211,63 +212,82 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval):
         
         if ohlc_data.get('error'):
             logger.error(f"Kraken OHLC API error for {kraken_ticker}, interval {interval}: {ohlc_data['error']}")
-            return [] if interval == OHLC_INTERVAL_MIN else {'high': None, 'low': None}
+            return []
 
         result_key = next(iter(ohlc_data['result'])) 
         data_list = ohlc_data['result'][result_key]
         
-        if interval == OHLC_INTERVAL_MIN:
-            # Returnerar tid och slutpris för grafen (5-min)
-            return [{'time': int(row[0]), 'price': float(row[4])} for row in data_list]
-        
-        elif interval == 1440:
-            # Returnerar 24h high/low (används inte längre för grafen, men kan vara bra att ha)
-            if data_list:
-                all_highs = [float(row[2]) for row in data_list]
-                all_lows = [float(row[3]) for row in data_list]
-                return {'high': max(all_highs), 'low': min(all_lows)}
-            return {'high': None, 'low': None}
+        # Returnerar tid och slutpris för grafen
+        return [{'time': int(row[0]), 'price': float(row[4])} for row in data_list]
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching OHLC data (Interval {interval}) for {kraken_ticker}: {e}")
-        return [] if interval == OHLC_INTERVAL_MIN else {'high': None, 'low': None}
+        return []
     except Exception as e:
         logger.error(f"Unexpected error processing OHLC data: {e}")
-        return [] if interval == OHLC_INTERVAL_MIN else {'high': None, 'low': None}
+        return []
 
-# --- Bakgrundstrådens Logik (Cache) ---
+# --- Bakgrundstrådens Logik (Fullständig Cache) ---
 
 def update_redis_cache(redis_instance):
-    """Loop som körs i bakgrunden för att uppdatera ALL data i Redis-cachen."""
+    """Loop som körs i bakgrunden för att uppdatera ALL data i Redis-cachen, 
+       inklusive 2-min OHLC-historik (720 punkter/24h) för ALLA mynt."""
+    
+    # Uppdateringsintervallet sätts till 120 sekunder (2 minuter)
+    UPDATE_CYCLE_SECONDS = 120 
+    
     while True:
+        cycle_start_time = time.time()
+        
         try:
-            logger.debug("--- Bakgrundstråd: Hämtar ALL data (Ticker inkl 24h High/Low, OHLC 5min för Standard) ---")
+            logger.debug("--- Bakgrundstråd: Startar fullständig uppdateringscykel ---")
             
-            # 1. Hämta realtidsdata för alla par (inkl. 24h high/low från Ticker API)
+            # 1. Hämta realtidsdata för alla par (OCH 24H High/Low)
             new_data = fetch_crypto_data()
             
-            # 2. Hämta ENDAST historisk data för standardvalet (STANDARD_TICKER, t.ex. XRP/EUR)
-            # Detta sparar API-anrop.
-            ohlc_5min = fetch_ohlc_data_from_kraken(STANDARD_TICKER, interval=OHLC_INTERVAL_MIN) 
-            # RANGE_24H från OHLC API behövs inte längre, eftersom Ticker-API:et ger 24h high/low
-            
-            new_data['OHLC_5MIN'] = ohlc_5min
-            # 24h range för grafen kan nu hämtas direkt från ALL_24H_RANGE['XRP'] i stället för separat OHLC anrop.
-            
+            # Spara Ticker-data först (med livslängd tills nästa cykel)
             if redis_instance:
-                data_json = json.dumps(new_data)
-                redis_instance.set('crypto_data', data_json, ex=UPDATE_INTERVAL_SECONDS_DATA + 5) # +5s buffert
+                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 5)
+            
+            # --- 2. Hämta OHLC-data (2 minuter) för ALLA mynt ---
+            
+            # 2 minuters intervall för att få 24h historik i ett anrop (720 punkter)
+            ohlc_interval = 2 
+            
+            for label, ticker in CRYPTO_PAIRS.items():
                 
-                timestamp_str = time.strftime("%H:%M:%S", time.gmtime(new_data['timestamp']))
-                logger.debug(f"✅ ALL data sparad i Redis. Uppdaterad: {timestamp_str} UTC")
+                # Anropar Kraken med 2-minuters intervall
+                ohlc_data = fetch_ohlc_data_from_kraken(ticker, interval=ohlc_interval) 
+                
+                if ohlc_data:
+                    # Nyckel i Redis reflekterar intervallet
+                    ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{ticker}' 
+                    
+                    # Lagra datan i Redis med en livslängd på 2 timmar (7200 sek)
+                    redis_instance.set(ohlc_cache_key, json.dumps(ohlc_data), ex=7200) 
+                    logger.debug(f"   >>> OHLC {ohlc_interval}-min sparad i cache för {ticker}")
+                
+                # VIKTIGT: Pausa 2 sekunder för att undvika rate limits (50+ anrop på 120s).
+                time.sleep(2) 
+            
+            # --- Cykel avslutad ---
+            
+            cycle_duration = time.time() - cycle_start_time
+            logger.debug(f"✅ Fullständig cache-cykel slutförd på {cycle_duration:.2f} sekunder.")
+            
+            # Pausa tills nästa cykel
+            time_to_sleep = UPDATE_CYCLE_SECONDS - cycle_duration
+            if time_to_sleep > 0:
+                 logger.debug(f"Väntar {time_to_sleep:.2f} sekunder till nästa cykel.")
+                 time.sleep(time_to_sleep)
             else:
-                logger.warning("Redis är inte initialiserad. Hoppar över cachelagring.")
+                 logger.warning(f"Cykeln tog för lång tid ({cycle_duration:.2f}s)! Överskrider uppdateringsintervallet.")
+
 
         except Exception as e:
-            logger.error(f"❌ Kritisk fel i bakgrundstråd: {e}. Fortsätter efter {UPDATE_INTERVAL_SECONDS_DATA}s.")
+            logger.error(f"❌ Kritisk fel i bakgrundstråd: {e}")
+            time.sleep(60)
             
-        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
-
 # Starta bakgrundstråden om Redis är ansluten
 if r:
     worker_thread = threading.Thread(target=update_redis_cache, args=(r,), daemon=True)
@@ -281,9 +301,7 @@ app = dash.Dash(__name__, external_stylesheets=[
 ])
 server = app.server
 
-# ... (App Layout är oförändrad) ...
-
-# (Hela app.layout-definitionen är oförändrad, den hoppas över här för att spara utrymme)
+# --- App Layout ---
 
 app.layout = html.Div(style={
     'backgroundColor': '#f8f9fa', 
@@ -402,14 +420,14 @@ app.layout = html.Div(style={
 # --- Hämta data från Redis ---
 
 def get_data_from_redis():
-    """Hämtar data från Redis eller standarddata om cachen är tom. (Oförändrad)"""
+    """Hämtar data från Redis eller None om cachen är tom/fel."""
     if r:
         try:
             cached_data = r.get('crypto_data')
             if cached_data:
                 return json.loads(cached_data)
             else:
-                logger.warning("Cache är tom. Väntar på bakgrundstråd.")
+                logger.warning("Cache 'crypto_data' är tom. Väntar på bakgrundstråd.")
                 return None
         except exceptions.ConnectionError as e:
             logger.error(f"Redis-anslutningsfel i callback: {e}")
@@ -426,10 +444,10 @@ def get_data_from_redis():
                Input('coin-dropdown', 'value'),
                Input('currency-dropdown', 'value')])
 def update_metrics_and_graph(n, coin_symbol, currency):
-    # LÄSER ALLTID FRÅN CACHE
+    
     data = get_data_from_redis()
     
-    # 1. Kontrollera om data finns
+    # Hantera laddning/saknad data
     if data is None or 'EUR_SEK_RATE' not in data:
         price_text = "Laddar data..."
         updated_text = "Väntar på data från Kraken/Redis..."
@@ -437,7 +455,7 @@ def update_metrics_and_graph(n, coin_symbol, currency):
         figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
         return price_text, updated_text, figure
 
-    # 2. Hämta pris och konstanter
+    # 1. Hämta Pris & Konstanter
     price_key = f'{coin_symbol}/{currency}'
     current_price = data.get(price_key)
     timestamp = data.get('timestamp')
@@ -450,7 +468,7 @@ def update_metrics_and_graph(n, coin_symbol, currency):
         figure.update_layout(title="Kunde inte hämta pris.", template="plotly_white", height=400)
         return price_text, updated_text, figure
     
-    # 3. Formatera priset
+    # Prisformatering
     if current_price < 10:
         price_format = f"{current_price:,.4f}"
     else:
@@ -459,24 +477,31 @@ def update_metrics_and_graph(n, coin_symbol, currency):
     price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
 
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
-    
     price_text = f"{coin_label}: {price_format} {currency}"
     updated_text = f"Senast uppdaterad (Realtime Ticker): {time.strftime('%H:%M:%S', time.gmtime(timestamp))} UTC"
 
     
-    # 4. Hämta OHLC-data FRÅN CACHE för grafen
+    # 2. Hämta Historisk Data från cache (2 min intervall)
     figure = go.Figure()
+    ohlc_interval = OHLC_CACHE_INTERVAL_MIN # 2 minuter
+    kraken_ticker = CRYPTO_PAIRS[coin_label]
     
-    is_cached_ticker = (coin_symbol == DEFAULT_PAIR_KEY.split(' ')[0])
+    ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
+    historical_data = []
     
-    historical_data = data.get('OHLC_5MIN', [])
+    if r:
+        cached_ohlc = r.get(ohlc_cache_key)
+        if cached_ohlc:
+            historical_data = json.loads(cached_ohlc)
+            logger.debug(f"Använder cachad {ohlc_interval}-min OHLC data för {kraken_ticker}")
+    
     range_data_raw = data.get('ALL_24H_RANGE', {}).get(coin_symbol, {})
-    
-    # Använd 24h range från Ticker API för grafens markeringar (om tillgänglig)
     high_24h_eur = range_data_raw.get('high_eur')
     low_24h_eur = range_data_raw.get('low_eur')
     
-    if historical_data and is_cached_ticker:
+    # 3. Rita Grafen
+    
+    if historical_data:
         
         times = [time.strftime('%H:%M', time.gmtime(item['time'])) for item in historical_data]
         prices_eur = [item['price'] for item in historical_data]
@@ -491,12 +516,12 @@ def update_metrics_and_graph(n, coin_symbol, currency):
             high_24h_display = high_24h_eur
             low_24h_display = low_24h_eur
         
-        # Huvudlinje: Aktuell Kurs (baserad på 5-minuters slutpris)
+        # Huvudlinje: Kurs
         figure.add_trace(go.Scatter(
             x=times,
             y=prices_display,
             mode='lines',
-            name=f'Aktuell Kurs ({OHLC_INTERVAL_MIN} min intervall)',
+            name=f'Kurs ({ohlc_interval} min intervall)',
             line=dict(color='#0056b3', width=3),
         ))
 
@@ -525,8 +550,8 @@ def update_metrics_and_graph(n, coin_symbol, currency):
             )
 
     else:
-        # Visa meddelande om historisk data saknas (om annan valuta än standard är vald)
-        msg = f"Historisk OHLC-data visas endast för {DEFAULT_PAIR_KEY} (standardval) för att undvika rate limits. Realtidspriset visas ovan."
+        # Visa meddelande om historisk data saknas (om cache är tom)
+        msg = f"Laddar historisk OHLC-data (2-min intervall) för {coin_label}. Det kan ta upp till 2 minuter efter appstart."
         
         # Rita bara en enkel markering för det aktuella priset
         current_time = time.strftime('%H:%M:%S', time.gmtime(timestamp))
@@ -544,7 +569,7 @@ def update_metrics_and_graph(n, coin_symbol, currency):
     
     figure.update_layout(
         title=f'{coin_label} Prisutveckling ({currency})',
-        xaxis_title=f"Tid ({OHLC_INTERVAL_MIN} min intervall)",
+        xaxis_title=f"Tid ({ohlc_interval} min intervall)",
         yaxis_title=f"Pris ({currency})",
         template="plotly_white",
         margin=dict(l=40, r=40, t=40, b=40),
@@ -565,7 +590,7 @@ def update_metrics_and_graph(n, coin_symbol, currency):
                State('coin-dropdown', 'value'),
                State('currency-dropdown', 'value')])
 def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
-    # ... (Din befintliga kod, oförändrad) ...
+    
     if n_clicks is None or n_clicks == 0:
         return ""
     
@@ -600,16 +625,16 @@ def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
     else:
         return html.Span(f"✅ Alert satt för {coin_label} > {threshold_val} {currency}. Nuvarande pris: {current_price:.4f}.", style={'color': '#495057'})
 
-# --- Callback för Krypto Sammanfattning (NU MED 24H HIGH/LOW) ---
+# --- Callback för Krypto Sammanfattning (MED 24H HIGH/LOW) ---
 
 @app.callback(Output('crypto-summary', 'children'),
               [Input('interval-component', 'n_intervals'),
                Input('currency-dropdown', 'value')])
 def update_crypto_summary_cards(n, currency):
-    # LÄSER ALLTID FRÅN CACHE
+    
     data = get_data_from_redis()
     
-    if data is None or len(data) <= 3: # Ändrad till 3 för att räkna med ALL_24H_RANGE
+    if data is None or len(data) <= 3: 
         return html.Div("Laddar kryptoöversikt...", style={'textAlign': 'center', 'width': '100%', 'color': '#6c757d', 'padding': '20px'})
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
@@ -638,6 +663,7 @@ def update_crypto_summary_cards(n, currency):
         price_status_style = {'color': '#6c757d', 'fontWeight': 'normal'} 
         
         if price_eur is not None:
+            # Konvertera till SEK/EUR
             if currency == 'SEK':
                 current_price = price_eur * eur_to_sek
                 high_24h = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
@@ -647,7 +673,7 @@ def update_crypto_summary_cards(n, currency):
                 high_24h = high_24h_eur
                 low_24h = low_224h_eur
                 
-            # Formatering (används för pris, high och low)
+            # Formateringshjälpfunktion
             def format_price(p):
                 if p is None: return "N/A"
                 price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
@@ -683,10 +709,10 @@ def update_crypto_summary_cards(n, currency):
 
 
 if __name__ == '__main__':
-    # app.run_server(debug=True)  # För lokal utveckling
+    # För lokal utveckling
+    # app.run_server(debug=True)  
     pass
 
 if __name__ != '__main__':
     # Render (WSGI) kommer att använda 'server' variabeln
-    # 'server' är definierad som 'app.server'
     pass

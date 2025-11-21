@@ -253,7 +253,6 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
         
         if len(ohlc_data) >= blocks:
             # Använder priset vid block-antalet bakåt som referens
-            # Observera att -blocks kommer att vara indexet för den äldsta datan vi behöver.
             reference_price = ohlc_data[-blocks]['price'] 
             
             if reference_price and reference_price > 0:
@@ -283,17 +282,28 @@ def calculate_trendline(historical_data, blocks):
     y_values = np.array([item['price'] for item in data_segment])
 
     # Linjär regression
-    slope, intercept, _, _, _ = linregress(x_values, y_values)
+    slope, intercept, r_value, p_value, std_err = linregress(x_values, y_values)
     
-    # Returnerar startindexet i den globala (fulla) historiklistan.
     start_index_global = len(historical_data) - blocks 
     
     return slope, intercept, start_index_global
 
+def format_change(c):
+    """
+    Global hjälpfunktion.
+    Formaterar ett procentvärde (c) med färg och tecken.
+    """
+    if c is None or c == 0.0: 
+        return html.Span("N/A", style={'color': '#6c757d'})
+        
+    color = '#10b981' if c > 0 else '#ef4444' # Grön/Röd
+    symbol = '▲' if c > 0 else '▼'
+
+    return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
+
 # --- Bakgrundstrådens Logik (Fullständig Cache) ---
 def update_redis_cache(redis_instance):
     """Uppdaterar all krypto- och OHLC-data i Redis var 120:e sekund."""
-    # Sätt denna till 120 sekunder för att minska antalet API-anrop.
     UPDATE_CYCLE_SECONDS = 120 
     
     while True:
@@ -363,246 +373,10 @@ if r:
     worker_thread = threading.Thread(target=update_redis_cache, args=(r,), daemon=True)
     worker_thread.start()
     logger.debug(">>> Bakgrundstråd startad och snurrar!")
-import dash
-from dash import dcc, html
-from dash.dependencies import Input, Output, State
-import plotly.graph_objects as go
-import numpy as np
-import time
-import json
-from scipy.stats import linregress
-import redis
-import os
-from datetime import datetime
-
-# --- KONSTANTER OCH INITIALISERING ---
-
-# Lista över valutor som ska visas (Används i Dropdown och Summary)
-COINS_LABELS = [
-    'BTC (Bitcoin)', 
-    'ETH (Ethereum)', 
-    'ADA (Cardano)', 
-    'DOT (Polkadot)',
-    'SOL (Solana)'
-]
-DEFAULT_PAIR_KEY = 'BTC (Bitcoin)'
-CURRENCIES = ['EUR', 'SEK', 'USD'] # Fiatvalutor
-
-# Mappning mellan symboler och fullständiga kraken-namn (för historisk data/OHLC)
-# Dash-appen använder 'BTC', 'ETH' etc.
-SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
-# OBS: Kraken använder "XBT" för Bitcoin i vissa API:er, men Dash använder 'BTC' internt.
-CRYPTO_PAIRS = {
-    'BTC (Bitcoin)': 'XBT/EUR',
-    'ETH (Ethereum)': 'ETH/EUR',
-    'ADA (Cardano)': 'ADA/EUR',
-    'DOT (Polkadot)': 'DOT/EUR',
-    'SOL (Solana)': 'SOL/EUR',
-}
-
-OHLC_CACHE_INTERVAL_MIN = 5 # Intervallet för historisk data (måste matcha bakgrundsjobbet)
-OHLC_DATA_POINTS = 72 # 72 punkter * 5 min = 6 timmars data
-
-# Konfiguration för trendlinjer
-TREND_WINDOWS = {
-    '1h': {'blocks': int(60 / OHLC_CACHE_INTERVAL_MIN), 'color': '#ff7f0e', 'name': '1h Trend'}, # 12 punkter
-    '3h': {'blocks': int(180 / OHLC_CACHE_INTERVAL_MIN), 'color': '#d62728', 'name': '3h Trend'}, # 36 punkter
-    '6h': {'blocks': int(360 / OHLC_CACHE_INTERVAL_MIN), 'color': '#9467bd', 'name': '6h Trend'}, # 72 punkter
-}
-
-# --- REDIS ANLÄGGNING (MOCK FÖR LOKAL KÖRNING) ---
-# I en riktig miljö skulle detta ansluta till en extern Redis-instans.
-
-try:
-    # Försök ansluta till Redis om miljövariabler finns (för Render/Produktion)
-    r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    r.ping()
-    print("Ansluten till Redis framgångsrikt.")
-except Exception as e:
-    # Fallback till None om Redis inte kan anslutas (för lokal dev utan Redis)
-    print(f"Kunde inte ansluta till Redis: {e}. Använder mock-data.")
-    r = None
-
-# --- MOCK / SIMULERAD REDIS DATA (OM r ÄR None) ---
-
-def generate_mock_ohlc_data(kraken_ticker, num_points, interval_min, base_price=35000):
-    """Genererar en serie med simulerade OHLC-datapunkter."""
-    now = time.time()
-    data = []
-    
-    # Simulerad prisrörelse
-    base_price_adj = base_price * (1 + np.sin(now / 1000000) * 0.05)
-    
-    for i in range(num_points):
-        # Tiden går bakåt
-        ts = now - (num_points - 1 - i) * interval_min * 60
-        
-        # Enkel slumpmässig prissimulering
-        price_noise = np.random.normal(0, 1000)
-        price = base_price_adj + price_noise + (i - num_points / 2) * 50
-        
-        data.append({
-            'time': ts,
-            'price': max(1, price) # Se till att priset är positivt
-        })
-    return data
-
-def generate_mock_data():
-    """Skapar en fullständig mock-datamängd som liknar den som sparas i Redis."""
-    now = time.time()
-    mock_data = {
-        'EUR_SEK_RATE': 11.5,
-        'timestamp': now,
-        'ALL_24H_RANGE': {},
-        'ALL_PERCENT_CHANGE': {},
-    }
-    
-    # Mock OHLC data generation for BTC and ETH
-    btc_ohlc = generate_mock_ohlc_data('XBT/EUR', OHLC_DATA_POINTS, OHLC_CACHE_INTERVAL_MIN, base_price=60000)
-    eth_ohlc = generate_mock_ohlc_data('ETH/EUR', OHLC_DATA_POINTS, OHLC_CACHE_INTERVAL_MIN, base_price=3500)
-    
-    mock_data[f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_XBT/EUR'] = json.dumps(btc_ohlc)
-    mock_data[f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_ETH/EUR'] = json.dumps(eth_ohlc)
-
-    
-    # Mock Ticker Data and Summary Info
-    base_prices = {'BTC': 60000, 'ETH': 3500, 'ADA': 0.5, 'DOT': 7.0, 'SOL': 150.0}
-
-    for symbol in base_prices:
-        # Pris (EUR)
-        price_eur = base_prices[symbol] * (1 + np.random.uniform(-0.01, 0.01))
-        mock_data[f'{symbol}/EUR'] = price_eur
-        
-        # Pris (SEK) - Baserat på mock rate
-        mock_data[f'{symbol}/SEK'] = price_eur * mock_data['EUR_SEK_RATE']
-        
-        # Pris (USD) - Antag 1 EUR = 1.08 USD
-        mock_data[f'{symbol}/USD'] = price_eur * 1.08
-        
-        # 24H Range
-        mock_data['ALL_24H_RANGE'][symbol] = {
-            'high_eur': price_eur * 1.02, 
-            'low_eur': price_eur * 0.98
-        }
-        
-        # Procentuella förändringar
-        mock_data['ALL_PERCENT_CHANGE'][symbol] = {
-            '30m': round(np.random.uniform(-0.5, 0.5), 2),
-            '1h': round(np.random.uniform(-1.0, 1.0), 2),
-            '3h': round(np.random.uniform(-2.0, 2.0), 2),
-            '6h': round(np.random.uniform(-3.0, 3.0), 2),
-            '24h': round(np.random.uniform(-5.0, 5.0), 2),
-            '7d': round(np.random.uniform(-10.0, 10.0), 2),
-            '30d': round(np.random.uniform(-20.0, 20.0), 2),
-        }
-        
-    return mock_data
-
-MOCK_DATA = generate_mock_data()
-
-
-# --- NYTTOLASTER / FUNKTIONER ---
-
-def get_data_from_redis():
-    """Hämtar all data från Redis eller returnerar mock-data."""
-    if r is None:
-        return MOCK_DATA
-    
-    try:
-        # Hämta de nycklar som appen behöver. 
-        # Här måste vi lista ALLA nycklar som används av callbacks.
-        all_symbols = [coin.split(' ')[0] for coin in COINS_LABELS]
-        price_keys = [f'{s}/{c}' for s in all_symbols for c in CURRENCIES]
-        ohlc_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_XBT/EUR' # Hämta en OHLC-nyckel som exempel
-        
-        keys_to_fetch = ['EUR_SEK_RATE', 'timestamp', 'ALL_24H_RANGE', 'ALL_PERCENT_CHANGE', ohlc_key] + price_keys
-        
-        pipe = r.pipeline()
-        for key in keys_to_fetch:
-            pipe.get(key)
-        
-        results = pipe.execute()
-        
-        data = {}
-        for key, value in zip(keys_to_fetch, results):
-            if value:
-                # ALL_24H_RANGE och ALL_PERCENT_CHANGE lagras som JSON-strängar
-                if key in ['ALL_24H_RANGE', 'ALL_PERCENT_CHANGE', ohlc_key] or key.startswith('OHLC_CACHED_'):
-                    try:
-                        data[key] = json.loads(value.decode('utf-8'))
-                    except json.JSONDecodeError:
-                        print(f"Varning: Kunde inte avkoda JSON för nyckel: {key}")
-                        data[key] = {}
-                # Pris- och valutakurser lagras som floats
-                elif key == 'timestamp':
-                    data[key] = float(value.decode('utf-8'))
-                else:
-                    try:
-                        data[key] = float(value.decode('utf-8'))
-                    except ValueError:
-                        data[key] = None # Felaktigt prisvärde
-        
-        # Kontrollera att essentiell data finns
-        if 'timestamp' not in data:
-            data['timestamp'] = time.time()
-        if 'EUR_SEK_RATE' not in data:
-             data['EUR_SEK_RATE'] = 11.0 # Standardvärde vid fel
-             
-        return data
-
-    except Exception as e:
-        print(f"Fel vid hämtning av data från Redis: {e}")
-        return None
-
-
-def calculate_trendline(historical_data, blocks):
-    """
-    Beräknar en linjär regression (trendlinje) på de N sista datapunkterna.
-    
-    Använder EUR-priset för beräkning, oavsett visningsvaluta.
-    
-    :param historical_data: Lista med {'time': ts, 'price': eur_price} dicts.
-    :param blocks: Antal datapunkter att använda.
-    :return: (slope, intercept, start_index) eller (None, None, None)
-    """
-    if len(historical_data) < blocks:
-        return None, None, None
-        
-    # Välj de senaste N punkterna
-    recent_data = historical_data[-blocks:]
-    
-    # Skapa x-värden (index 0 till blocks-1) och y-värden (pris i EUR)
-    x = np.arange(blocks)
-    y = np.array([item['price'] for item in recent_data])
-    
-    # Utför linjär regression
-    try:
-        slope, intercept, r_value, p_value, std_err = linregress(x, y)
-        start_index = len(historical_data) - blocks
-        return slope, intercept, start_index
-    except Exception as e:
-        print(f"Fel vid linjär regression: {e}")
-        return None, None, None
-
-def send_telegram_alert(coin_label, price, currency, threshold):
-    """
-    Simulerar sändning av en Telegram-notis.
-    I en produktionsmiljö skulle detta anropa Telegram Bot API.
-    """
-    print("--- SIMULERAD TELEGRAM ALERT ---")
-    print(f"ALERT: {coin_label} har nått eller överskridit gränsvärdet!")
-    print(f"Pris: {price:.4f} {currency} (Gräns: {threshold:.4f} {currency})")
-    
-    # I en riktig app skulle man använda os.getenv('TELEGRAM_BOT_TOKEN')
-    # och skicka en POST-request till Telegram API:et.
-    
-    # MOCK: Anta alltid framgång för att visa funktionen i Dash-appen.
-    return True 
 
 # --- DASH APPLIKATIONS INITIALISERING ---
-# Lägger till en bättre CSS-länk för lite snyggare Dash-standardlook.
 app = dash.Dash(__name__, external_stylesheets=[
-    'https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css' 
+    'https://codepen.io/chriddyp/pen/bWLwgP.css' 
 ])
 server = app.server # Denna variabel används av Gunicorn/Render
 
@@ -771,19 +545,11 @@ def update_all_live_data(n, coin_symbol, currency):
     
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR') # Fallback
-    ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker.replace("/", "")}' # Kraken symboler är oftast XBT/EUR, men Redis-nyckeln är XBT_EUR
     
-    # Om vi använder mock-data och Redis är None, använd den fördefinierade nyckeln i MOCK_DATA
-    if r is None and 'OHLC_CACHED_5MIN_XBT/EUR' in data: 
-         # Välj rätt nyckel för mock-data om vi visar BTC/ETH
-         if coin_symbol == 'BTC':
-             ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_XBTEUR' 
-         elif coin_symbol == 'ETH':
-             ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_ETHEUR'
-         else:
-             # För andra valutor, använd den generiska mock-nyckeln (kan vara tom)
-             ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_XBT/EUR'
-             
+    # Nyckeln i Redis är utan snedstreck, t.ex. XBT/EUR blir XBTEUR
+    ohlc_cache_key_prefix = f'OHLC_CACHED_{ohlc_interval}MIN_'
+    ohlc_cache_key = f'{ohlc_cache_key_prefix}{kraken_ticker.replace("/", "")}' 
+    
     historical_data = data.get(ohlc_cache_key)
     
     if not isinstance(historical_data, list):
@@ -969,13 +735,6 @@ def update_all_live_data(n, coin_symbol, currency):
                 price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
                 return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
             
-            def format_change(c):
-                # Använd N/A om c är 0.0 (indikerar oftast att data saknades för perioden)
-                if c is None or c == 0.0: return html.Span("N/A", style={'color': '#6c757d'})
-                color = 'green' if c >= 0 else 'red'
-                sign = '+' if c >= 0 else ''
-                return html.Span(f"{sign}{c:.2f}%", style={'color': color, 'fontWeight': 'bold'})
-            
             formatted_price = format_price(current_price_loop)
             formatted_high = format_price(high_24h)
             formatted_low = format_price(low_24h)
@@ -1000,6 +759,7 @@ def update_all_live_data(n, coin_symbol, currency):
                     html.Tbody([
                         html.Tr(children=[
                             html.Td(f"{period}:", style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'width': '50%'}),
+                            # Detta anropar nu den globalt definierade format_change
                             html.Td(format_change(percent_data.get(period)), style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'textAlign': 'right'})
                         ]) for period in periods_to_show
                     ])

@@ -250,7 +250,6 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
     """Beräknar procentuell förändring baserat på historisk OHLC-data."""
     changes = {}
     if not ohlc_data or current_price is None or current_price == 0:
-        # Sätt till None istället för 0.0 om data saknas
         return {key: None for key in periods}
 
     for period, config in periods.items():
@@ -263,7 +262,6 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
             else:
                 changes[period] = 0.0
         else:
-            # Om vi inte har tillräckligt med data för perioden (t.ex. 30d)
             changes[period] = None 
     return changes
 
@@ -281,15 +279,18 @@ def format_change(c):
     """Global format funktion."""
     if c is None: 
         return html.Span("N/A", style={'color': '#6c757d'})
-    
     color = '#10b981' if c > 0 else '#ef4444'
     symbol = '▲' if c > 0 else '▼'
-    # Om c är 0.0 (exakt oförändrat)
     if c == 0.0:
         color = '#6c757d'
         symbol = '-'
-        
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
+
+def format_price(p):
+    """Global prisformatteringsfunktion."""
+    if p is None: return "N/A"
+    price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
+    return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
 
 # --- Bakgrundstrådens Logik ---
 def update_redis_cache(redis_instance):
@@ -302,10 +303,9 @@ def update_redis_cache(redis_instance):
         try:
             logger.debug("--- Bakgrundstråd: Startar uppdateringscykel ---")
             
-            # 1. Hämta och SPARA realtidsdata direkt (så priser syns direkt)
+            # 1. Hämta realtidsdata
             new_data = fetch_crypto_data()
             
-            # Om vi redan har gammal procentdata i cachen, behåll den tills vi räknat ny
             if redis_instance:
                 try:
                     old_data_json = redis_instance.get('crypto_data')
@@ -314,13 +314,11 @@ def update_redis_cache(redis_instance):
                         if 'ALL_PERCENT_CHANGE' in old_data:
                             new_data['ALL_PERCENT_CHANGE'] = old_data['ALL_PERCENT_CHANGE']
                 except:
-                    pass # Ignorera fel vid läsning av gammal data
+                    pass 
                 
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
                 logger.debug("✅ Prisdata (Ticker) sparad snabbt.")
 
-            # Initiera procent-dict. Om vi inte lyckas hämta ny data för ett mynt,
-            # försöker vi behålla det gamla värdet om möjligt, annars tomt.
             all_percent_changes = new_data.get('ALL_PERCENT_CHANGE', {})
             
             for label, ticker in CRYPTO_PAIRS.items():
@@ -349,12 +347,10 @@ def update_redis_cache(redis_instance):
                 long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
                 long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
                 
-                # Uppdatera procentändringar för detta mynt
                 percent_changes.update(long_term_changes)
                 all_percent_changes[coin_symbol] = percent_changes
                 
                 # VIKTIGT: Spara inkrementellt!
-                # Uppdatera huvud-datan med den nya informationen för DETTA mynt direkt
                 new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
                 if redis_instance:
                     redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
@@ -443,9 +439,7 @@ def update_all_live_data(n, coin_symbol, currency):
         price_text = f"❌ Pris för {coin_symbol}/{currency} saknas."
         updated_text = "Data saknas."
     else:
-        price_format = f"{current_price_display_currency:,.4f}" if current_price_display_currency < 10 else f"{current_price_display_currency:,.2f}"
-        price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
-        price_text = html.Span(f"{coin_label}: {price_format} {currency}", style={'color': '#0056b3' if current_price_eur else '#dc3545'})
+        price_text = html.Span(f"{coin_label}: {format_price(current_price_display_currency)} {currency}", style={'color': '#0056b3' if current_price_eur else '#dc3545'})
         updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.localtime(timestamp))} Lokal tid (CET/CEST)"
     
     # HÄMTA GRAFDATA
@@ -533,11 +527,6 @@ def update_all_live_data(n, coin_symbol, currency):
                 current_price_loop = price_eur
                 high_24h = high_24h_eur
                 low_24h = low_224h_eur
-                
-            def format_price(p):
-                if p is None: return "N/A"
-                price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
-                return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
             
             formatted_price = format_price(current_price_loop)
             formatted_high = format_price(high_24h)

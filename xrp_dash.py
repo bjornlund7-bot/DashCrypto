@@ -97,11 +97,39 @@ def get_data_from_redis():
     """Hämtar data från Redis cache."""
     if r:
         try:
-            cached_data = r.get('crypto_data')
-            if cached_data:
-                return json.loads(cached_data)
-            else:
-                return None
+            # FIX 1: Hämta nycklar med snedstreck (som de sparas)
+            all_symbols = [coin.split(' ')[0] for coin in COINS_LABELS]
+            price_keys = [f'{s}/{c}' for s in all_symbols for c in CURRENCIES]
+            
+            ohlc_keys_to_fetch = [
+                f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{pair}' 
+                for pair in CRYPTO_PAIRS.values()
+            ]
+            
+            keys_to_fetch = ['EUR_SEK_RATE', 'timestamp', 'ALL_24H_RANGE', 'ALL_PERCENT_CHANGE'] + price_keys + ohlc_keys_to_fetch
+            
+            pipe = r.pipeline()
+            for key in keys_to_fetch:
+                pipe.get(key)
+            
+            results = pipe.execute()
+            
+            data = {}
+            for key, value in zip(keys_to_fetch, results):
+                if value:
+                    if key in ['ALL_24H_RANGE', 'ALL_PERCENT_CHANGE'] or key.startswith(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_'):
+                        try:
+                            data[key] = json.loads(value.decode('utf-8'))
+                        except json.JSONDecodeError:
+                            data[key] = {}
+                    elif key == 'timestamp':
+                        data[key] = float(value.decode('utf-8'))
+                    else:
+                        try:
+                            data[key] = float(value.decode('utf-8'))
+                        except ValueError:
+                            data[key] = None 
+            return data
         except exceptions.ConnectionError as e:
             logger.error(f"Redis-anslutningsfel i callback: {e}")
             return None
@@ -273,12 +301,9 @@ def calculate_trendline(historical_data, blocks):
 
     data_segment = historical_data[-blocks:]
     
-    # Skapar index baserat på position i segmentet (0 till blocks-1)
     x_values = np.arange(len(data_segment))
-    # Använder EUR-priserna för trendberäkning
     y_values = np.array([item['price'] for item in data_segment])
 
-    # Linjär regression
     slope, intercept, r_value, p_value, std_err = linregress(x_values, y_values)
     
     start_index_global = len(historical_data) - blocks 
@@ -320,7 +345,7 @@ def update_redis_cache(redis_instance):
                     time.sleep(1) 
                     continue
                 
-                # A. Hämta 5-min OHLC (för korta rörelser/trendlinjer)
+                # A. Hämta 5-min OHLC
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
@@ -328,12 +353,12 @@ def update_redis_cache(redis_instance):
                 percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
                 
                 if ohlc_5min_data:
-                    # HÄR SPARA VI NYCKELN MED "/" T.EX "XRP/EUR"
+                    # Nyckel med snedstreck
                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}' 
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                     logger.debug(f"   >>> OHLC 5-min sparad i cache för {ticker}")
                     
-                # B. Hämta 1-dag OHLC (för långa rörelser)
+                # B. Hämta 1-dag OHLC
                 periods_ago_30d = 2592000 
                 ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
                 
@@ -345,7 +370,6 @@ def update_redis_cache(redis_instance):
                 
                 time.sleep(2) 
             
-            # 3. Uppdatera Ticker-data med procentrörelser och spara i Redis
             new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
             
             if redis_instance:
@@ -353,15 +377,11 @@ def update_redis_cache(redis_instance):
                 logger.debug("✅ Hela 'crypto_data' inklusive procentrörelser sparad i Redis.")
             
             cycle_duration = time.time() - cycle_start_time
-            logger.debug(f"✅ Fullständig cache-cykel slutförd på {cycle_duration:.2f} sekunder.")
-            
             time_to_sleep = UPDATE_CYCLE_SECONDS - cycle_duration
             if time_to_sleep > 0:
-                 logger.debug(f"Väntar {time_to_sleep:.2f} sekunder till nästa cykel.")
                  time.sleep(time_to_sleep)
             else:
                  logger.warning(f"Cykeln tog för lång tid ({cycle_duration:.2f}s)! Överskrider uppdateringsintervallet.")
-
 
         except Exception as e:
             logger.error(f"❌ Kritisk fel i bakgrundstråd: {e}")
@@ -376,7 +396,7 @@ if r:
 app = dash.Dash(__name__, external_stylesheets=[
     'https://codepen.io/chriddyp/pen/bWLwgP.css' 
 ])
-server = app.server # Denna variabel används av Gunicorn/Render
+server = app.server 
 
 # --- Dash Applikation Layout ---
 app.layout = html.Div(style={
@@ -481,13 +501,13 @@ app.layout = html.Div(style={
 
     dcc.Interval(
         id='interval-component',
-        interval=120*1000, # Uppdateras var 120:e sekund (2 minuter)
+        interval=120*1000, 
         n_intervals=0
     )
 ])
 
 
-# --- Callback för ALL LIVE-DATA (Pris, Tid, Graf, Sammanfattning) ---
+# --- Callback för ALL LIVE-DATA ---
 @app.callback(
     Output('current-price', 'children'),
     Output('last-updated', 'children'),
@@ -503,21 +523,18 @@ def update_all_live_data(n, coin_symbol, currency):
     
     data = get_data_from_redis()
     
-    # --- 1. Felhantering / Laddning (Returnerar Laddningsmeddelanden för alla 4 Outputs) ---
     if data is None or 'EUR_SEK_RATE' not in data:
         loading_text = "Laddar data..."
         loading_time = "Väntar på data från Kraken/Redis..."
         figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar...']))
         figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
         loading_summary = html.Div("Laddar kryptoöversikt...", style={'textAlign': 'center', 'width': '100%', 'color': '#6c757d', 'padding': '20px'})
-        
         return loading_text, loading_time, figure, loading_summary
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
 
-    # --- 2. Uppdatera Pris och Tidsstämpel (Text Outputs) ---
-    
+    # 2. Pris och Tid
     price_key = f'{coin_symbol}/{currency}'
     current_price_display_currency = data.get(price_key)
     timestamp = data.get('timestamp')
@@ -527,32 +544,25 @@ def update_all_live_data(n, coin_symbol, currency):
         price_text = f"❌ Pris för {coin_symbol}/{currency} saknas."
         updated_text = "Data saknas eller är inte tillgänglig."
     else:
-        # Formattering (använder , som decimaltecken och mellanslag som tusentalsavskiljare)
         if current_price_display_currency < 10:
             price_format = f"{current_price_display_currency:,.4f}"
         else:
             price_format = f"{current_price_display_currency:,.2f}"
-            
-        # Svensk/Europeisk formatering av decimaler
         price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
-
         price_text = html.Span(f"{coin_label}: {price_format} {currency}", style={'color': '#0056b3' if current_price_eur else '#dc3545'})
         updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.localtime(timestamp))} Lokal tid (CET/CEST)"
     
-    # --- 3. Uppdatera Grafen (Figure Output) ---
-    
+    # 3. Graf
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
-    kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR') # Fallback
+    kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
     
-    # FIX: Använd samma nyckel som i update_redis_cache (med snedstreck om de finns)
-    # Ta INTE bort snedstreck här, eftersom bakgrundstråden inte gör det.
+    # FIX 2: Bygg nyckeln med snedstreck, exakt som i update_redis_cache
     ohlc_cache_key_prefix = f'OHLC_CACHED_{ohlc_interval}MIN_'
     ohlc_cache_key = f'{ohlc_cache_key_prefix}{kraken_ticker}' 
     
     historical_data = data.get(ohlc_cache_key)
     
     if not isinstance(historical_data, list):
-         # Om data är en JSON-sträng (från riktig Redis) eller None
         historical_data = [] 
         
     range_data_raw = data.get('ALL_24H_RANGE', {}).get(coin_symbol, {})
@@ -562,81 +572,52 @@ def update_all_live_data(n, coin_symbol, currency):
     figure = go.Figure()
     
     if historical_data and current_price_eur is not None:
-        
-        # Konvertera Priser och Tider
         prices_eur = [item['price'] for item in historical_data]
         if currency == 'SEK':
             prices_display = [p * eur_to_sek for p in prices_eur]
             high_24h_display = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
             low_24h_display = low_24h_eur * eur_to_sek if low_24h_eur is not None else None
         elif currency == 'USD':
-            # Antag 1 EUR = 1.08 USD för enkelhetens skull i mocken, men i prod skulle den hämtas från Redis
             usd_rate = data.get('EUR_USD_RATE', 1.08)
             prices_display = [p * usd_rate for p in prices_eur]
             high_24h_display = high_24h_eur * usd_rate if high_24h_eur is not None else None
             low_24h_display = low_24h_eur * usd_rate if low_24h_eur is not None else None
-        else: # EUR
+        else: 
             prices_display = prices_eur
             high_24h_display = high_24h_eur
             low_24h_display = low_24h_eur
         
-        # Använder lokal tid (inte UTC) för att matcha användarens förväntan
         times = [time.strftime('%H:%M', time.localtime(item['time'])) for item in historical_data]
         
-        # Huvudlinje: Kurs
         figure.add_trace(go.Scatter(
-            x=times,
-            y=prices_display,
-            mode='lines',
-            name=f'Kurs ({ohlc_interval} min intervall)',
-            line=dict(color='#0056b3', width=3),
-            hoverinfo='x+y'
+            x=times, y=prices_display, mode='lines', name=f'Kurs ({ohlc_interval} min)',
+            line=dict(color='#0056b3', width=3), hoverinfo='x+y'
         ))
         
-        # Trendlinjer (1h, 3h, 6h)
         for trend_key, config in TREND_WINDOWS.items():
             blocks = config['blocks']
             color = config['color']
             name = config['name']
-            
-            # Beräkna trendlinje baserat på EUR-priset
             slope, intercept, start_index = calculate_trendline(historical_data, blocks)
             
             if slope is not None and start_index is not None:
-                # Skapa x-värden för regressionen (0, 1, 2... blocks-1)
-                trend_x_segment_indices = np.arange(blocks)
+                trend_x_indices = np.arange(blocks)
+                trend_y_eur = slope * trend_x_indices + intercept
                 
-                # Beräkna trendlinjevärden i EUR: y = slope * x + intercept
-                trend_y_eur = slope * trend_x_segment_indices + intercept
+                if currency == 'SEK': trend_y_display = trend_y_eur * eur_to_sek 
+                elif currency == 'USD': trend_y_display = trend_y_eur * data.get('EUR_USD_RATE', 1.08)
+                else: trend_y_display = trend_y_eur
                 
-                # Konvertera till visningsvaluta
-                if currency == 'SEK':
-                    trend_y_display = trend_y_eur * eur_to_sek 
-                elif currency == 'USD':
-                    trend_y_display = trend_y_eur * data.get('EUR_USD_RATE', 1.08)
-                else:
-                    trend_y_display = trend_y_eur
-                
-                # Välj motsvarande tidsstämplar i grafen
                 trend_times = times[start_index:]
-                
                 figure.add_trace(go.Scatter(
-                    x=trend_times,
-                    y=trend_y_display,
-                    mode='lines',
-                    name=name,
-                    line=dict(color=color, width=2, dash='dash'),
-                    hoverinfo='x+y'
+                    x=trend_times, y=trend_y_display, mode='lines', name=name,
+                    line=dict(color=color, width=2, dash='dash'), hoverinfo='x+y'
                 ))
 
-        # 24h High/Low
-        # Decimalformatering för etiketter
         def format_24h_label(p):
             if p is None: return "N/A"
-            # Använder ',' som decimalavskiljare för europeisk läsbarhet
             price_format_24h = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
             return price_format_24h.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
-
 
         if high_24h_display is not None:
             figure.add_hline(
@@ -653,13 +634,10 @@ def update_all_live_data(n, coin_symbol, currency):
             )
 
     else:
-        # Visar nuvarande pris om historisk data saknas
         msg = f"Laddar historisk OHLC-data ({ohlc_interval}-min intervall) för {coin_label}..."
         current_time_ts = data.get('timestamp', time.time())
         current_time = time.strftime('%H:%M:%S', time.localtime(current_time_ts))
-        
-        price_display = current_price_display_currency 
-        if price_display is None: price_display = 0 
+        price_display = current_price_display_currency if current_price_display_currency else 0
         
         figure.add_trace(go.Scatter(
             x=[current_time], y=[price_display], mode='markers+text', 
@@ -681,22 +659,15 @@ def update_all_live_data(n, coin_symbol, currency):
         paper_bgcolor='white'
     )
     
-    # --- 4. Generera Sammanfattningskort (Crypto Summary) ---
-    
-    all_24h_range = data.get('ALL_24H_RANGE', {})
+    # 4. Sammanfattningskort
     all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) 
     summary_cards = []
     
     card_style = {
         'flex': '0 1 calc(25% - 15px)', 
-        'minWidth': '200px',
-        'padding': '15px',
-        'border': '1px solid #e0e0e0',
-        'borderRadius': '8px',
-        'backgroundColor': '#ffffff',
-        'boxShadow': '0 2px 4px rgba(0, 0, 0, 0.05)',
+        'minWidth': '200px', 'padding': '15px', 'border': '1px solid #e0e0e0',
+        'borderRadius': '8px', 'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0, 0, 0, 0.05)'
     }
-    
     periods_to_show = ['30m', '1h', '3h', '6h', '24h', '7d', '30d']
     
     for label in COINS_LABELS:
@@ -710,20 +681,16 @@ def update_all_live_data(n, coin_symbol, currency):
         
         price_status_style = {'color': '#6c757d', 'fontWeight': 'normal'} 
         
-        current_price_loop = None
-        high_24h = None
-        low_24h = None
-
         if price_eur is not None:
             if currency == 'SEK':
                 current_price_loop = price_eur * eur_to_sek
                 high_24h = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
                 low_24h = low_224h_eur * eur_to_sek if low_224h_eur is not None else None
             elif currency == 'USD':
-                usd_rate = data.get('EUR_USD_RATE', 1.08) # Använder mock/standard rate
+                usd_rate = data.get('EUR_USD_RATE', 1.08)
                 current_price_loop = price_eur * usd_rate
                 high_24h = high_24h_eur * usd_rate if high_24h_eur is not None else None
-                low_24h = low_224h_eur * usd_rate if low_24h_eur is not None else None
+                low_24h = low_224h_eur * usd_rate if low_224h_eur is not None else None
             else:
                 current_price_loop = price_eur
                 high_24h = high_24h_eur
@@ -747,87 +714,61 @@ def update_all_live_data(n, coin_symbol, currency):
             formatted_low = "N/A"
             price_status_style['color'] = '#dc3545' 
             
-        
         card_content = [
             html.P(label, style={'margin': '0 0 5px 0', 'fontSize': '1.1em', 'fontWeight': '500', 'color': '#0056b3'}),
             html.P(price_text_loop, style={'margin': '0 0 10px 0', 'fontSize': '1.4em'} | price_status_style),
-            
             html.Div(style={'borderTop': '1px solid #f0f0f0', 'paddingTop': '10px', 'marginBottom': '10px'}, children=[
                 html.Small("Prisrörelse:", style={'color': '#6c757d', 'fontWeight': 'bold', 'display': 'block', 'marginBottom': '5px'}),
                 html.Table(style={'width': '100%', 'fontSize': '0.9em', 'borderCollapse': 'collapse'}, children=[
                     html.Tbody([
                         html.Tr(children=[
                             html.Td(f"{period}:", style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'width': '50%'}),
-                            # Detta anropar nu den globalt definierade format_change
                             html.Td(format_change(percent_data.get(period)), style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'textAlign': 'right'})
                         ]) for period in periods_to_show
                     ])
                 ])
             ]),
-            
             html.Small(f"Högsta 24h: ", style={'color': '#6c757d', 'display': 'block', 'marginTop': '5px'}),
             html.Small(f"{formatted_high} {currency}", style={'color': 'green', 'fontWeight': 'bold', 'display': 'block'}),
             html.Small(f"Lägsta 24h: ", style={'color': '#6c757d', 'marginTop': '5px', 'display': 'block'}),
             html.Small(f"{formatted_low} {currency}", style={'color': 'red', 'fontWeight': 'bold', 'display': 'block'}),
         ]
-        
         card = html.Div(style=card_style, children=card_content)
         summary_cards.append(card)
 
-    # --- 5. Returnera alla 4 Outputs ---
     return price_text, updated_text, figure, summary_cards
 
-
-# --- Callback för Telegram Alert (Oberoende av Interval) ---
+# --- Callback för Telegram Alert ---
 @app.callback(Output('alert-output', 'children'),
               [Input('alert-button', 'n_clicks')],
               [State('alert-threshold', 'value'),
                State('coin-dropdown', 'value'),
                State('currency-dropdown', 'value')])
 def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
-    
-    if n_clicks is None or n_clicks == 0:
-        return ""
-    
-    if threshold is None or threshold == '':
-        return html.Span("❌ Ange ett giltigt gränsvärde innan du aktiverar alerten.", style={'color': '#dc3545', 'fontWeight': 'bold'})
+    if n_clicks is None or n_clicks == 0: return ""
+    if threshold is None or threshold == '': return html.Span("❌ Ange ett giltigt gränsvärde.", style={'color': '#dc3545', 'fontWeight': 'bold'})
     
     data = get_data_from_redis()
-    
-    if data is None:
-        return html.Span("❌ Kan inte kontrollera priset just nu (Kraken data saknas).", style={'color': '#dc3545', 'fontWeight': 'bold'})
+    if data is None: return html.Span("❌ Kan inte kontrollera priset just nu.", style={'color': '#dc3545', 'fontWeight': 'bold'})
 
     price_key = f'{coin_symbol}/{currency}'
     current_price = data.get(price_key)
-
-    if current_price is None:
-        return html.Span(f"❌ Prisdata saknas för {coin_symbol}/{currency}.", style={'color': '#dc3545', 'fontWeight': 'bold'})
+    if current_price is None: return html.Span(f"❌ Prisdata saknas.", style={'color': '#dc3545', 'fontWeight': 'bold'})
 
     try:
         threshold_val = float(threshold)
     except ValueError:
-        return html.Span("❌ Gränsvärdet måste vara ett giltigt nummer.", style={'color': '#dc3545', 'fontWeight': 'bold'})
+        return html.Span("❌ Gränsvärdet måste vara ett nummer.", style={'color': '#dc3545', 'fontWeight': 'bold'})
 
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
-
     if current_price >= threshold_val:
-        # Om priset redan är över gränsvärdet, skicka alerten direkt
         success = send_telegram_alert(coin_label, current_price, currency, threshold_val)
-        
-        if success:
-            return html.Span(f"🔔 ALERT AKTIVERAD: {coin_label} är nu {current_price:.4f} {currency}. Telegram-meddelande skickat!", style={'color': '#28a745', 'fontWeight': 'bold'})
-        else:
-            return html.Span("❌ ALERT: Kunde inte skicka Telegram-meddelande. Kontrollera loggarna.", style={'color': '#dc3545', 'fontWeight': 'bold'})
+        if success: return html.Span(f"🔔 ALERT AKTIVERAD: {coin_label} pris uppnått!", style={'color': '#28a745', 'fontWeight': 'bold'})
+        else: return html.Span("❌ ALERT: Kunde inte skicka.", style={'color': '#dc3545', 'fontWeight': 'bold'})
     else:
-        # Annars, sätt alerten (i en riktig app skulle detta spara alerten i Redis för bakgrundsjobbet)
-        # För denna demo simulerar vi bara att alerten är satt.
-        return html.Span(f"✅ Alert satt för {coin_label} > {threshold_val} {currency}. Nuvarande pris: {current_price:.4f}.", style={'color': '#495057'})
-
+        return html.Span(f"✅ Alert satt för {coin_label} > {threshold_val} {currency}.", style={'color': '#495057'})
 
 if __name__ == '__main__':
-    # Används vid lokal testning (körs endast lokalt)
     app.run_server(debug=True)  
-
 if __name__ != '__main__':
-    # Render (WSGI) använder 'server' variabeln som är definierad ovan.
     pass

@@ -67,6 +67,186 @@ LAST_SUMMARY_SENT = datetime.min # För periodisk sammanfattning
 import dash # Säkerställ att dash är importerad om den inte fanns i blocket innan
 app = dash.Dash(__name__)
 
+
+def background_data_collector():
+    """
+    DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
+    All skrivning till globala cacher sker inuti 'with data_lock:'.
+    """
+    global global_kpi_cache, SENT_NOTIFICATIONS, SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings, LAST_SUMMARY_SENT
+    
+    # Lokal räknare för OHLC/Excel-loggning
+    local_interval_counter = 0
+
+    print("---------------------------------------------------------")
+    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
+    print("---------------------------------------------------------")
+
+    # Koden för initial datainsamling (före while True) behöver också felhantering
+    initial_data_fetch = False
+    with data_lock:
+        if not global_kpi_cache:
+            initial_data_fetch = True
+            
+    if initial_data_fetch:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
+        for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+            
+            # --- NY DIAGNOSTISK LOGG (Här kraschade det i din logg) ---
+            print(f"🟢 Försöker hämta Ticker för {pair_key} ({pair_ticker})...") 
+            # --------------------------
+            
+            ticker_data, error = get_crypto_data(pair_ticker)
+            
+            # --- Initial Datainsamling: FELHANTERING ---
+            if error:
+                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") 
+                continue # Hoppa till nästa par
+
+            if ticker_data:
+                # ... (Resten av initial cashing logiken) ...
+                with data_lock:
+                    global_kpi_cache[pair_ticker] = {
+                        **ticker_data,
+                        'price_7d_eur': ticker_data['price_eur'],
+                        'price_30d_eur': ticker_data['price_eur'],
+                        'price_7d_sek': ticker_data['price_sek'],
+                        'price_30d_sek': ticker_data['price_sek'],
+                        'percent_change_100m': 0.0,
+                        'percent_change_360m': 0.0,
+                        'trend_30m_percent': 0.0,
+                        'trend_30m_color': '#555555',
+                        'time': datetime.now(),
+                        'signal_rating': 0,
+                        'signal_text': 'Väntar på historik',
+                        'signal_color': '#555555',
+                    }
+                    data_history[pair_ticker].append({
+                        'time': datetime.now(), 
+                        'price_sek': ticker_data['price_sek'],
+                        'price_eur': ticker_data['price_eur']
+                    })
+
+
+    while True:
+        
+        # Säkerställ att vi låser när vi skriver till delade globala variabler
+        with data_lock:
+            
+            # --- START PÅ LÅST BLOCK ---
+            
+            eur_sek_rate = get_eur_sek_rate()
+            current_time = datetime.now()
+            new_ratings = {}
+            print(f"\n--- Datauppdatering startad: {current_time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+
+            local_interval_counter += 1
+            is_ohlc_update_time = local_interval_counter % 60 == 0 # Varje hel timme
+
+            # Första loop: Hämta Ticker-data, uppdatera historik, hämta OHLC
+            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
+                
+                # 1. Hämta Ticker-data
+                ticker_data, error = get_crypto_data(pair_ticker)
+
+                # --- Huvudloop: Ticker FELHANTERING ---
+                if error:
+                    print(f"🔴 [FEL Ticker] {pair_key}: {error}") 
+                    continue # Hoppa till nästa par om fel uppstår
+                
+                cached_kpi = global_kpi_cache.get(pair_ticker, {})
+                current_price_sek = ticker_data['price_sek']
+                
+                # 2. Uppdatera lokal historik (Deque)
+                data_history[pair_ticker].append({
+                    'time': current_time, 
+                    'price_sek': ticker_data['price_sek'],
+                    'price_eur': ticker_data['price_eur']
+                })
+                local_history_list = list(data_history[pair_ticker]) 
+
+                # 3. Hämta/Uppdatera OHLC-data (Endast vid uppdatering)
+                price_7d_eur, price_7d_sek = cached_kpi.get('price_7d_eur'), cached_kpi.get('price_7d_sek')
+                price_30d_eur, price_30d_sek = cached_kpi.get('price_30d_eur'), cached_kpi.get('price_30d_sek')
+                
+                if is_ohlc_update_time:
+                    p7e, p7s, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
+                    if not error_7d:
+                        price_7d_eur, price_7d_sek = p7e, p7s
+                    else:
+                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}")
+                    
+                    p30e, p30s, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
+                    if not error_30d:
+                        price_30d_eur, price_30d_sek = p30e, p30s
+                    else:
+                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}")
+
+
+                # 4. Beräkna trend-KPI:er
+                trend_30m_percent, trend_30m_text, trend_30m_color = calculate_30min_trend(pair_ticker, local_history_list)
+                percent_change_100m = calculate_100min_change(local_history_list)
+                percent_change_360m = calculate_360min_change(local_history_list)
+
+                # 5. Skapa KPI-objekt för MTS-signal
+                mts_kpi_data = {
+                    'price_sek': current_price_sek,
+                    'high_24h_sek': ticker_data['high_24h_sek'],
+                    'low_24h_sek': ticker_data['low_24h_sek'],
+                    'price_7d_sek': price_7d_sek,
+                    'price_30d_sek': price_30d_sek,
+                    'percent_change_100m': percent_change_100m,
+                    'percent_change_360m': percent_change_360m,
+                }
+                
+                # 6. Beräkna MTS-signal
+                signal_text, total_rating, signal_color, percent_7d, percent_30d = generate_mts_signal(mts_kpi_data, local_history_list)
+                
+                # 7. Uppdatera global KPI cache
+                global_kpi_cache[pair_ticker] = {
+                    **ticker_data,
+                    'price_7d_eur': price_7d_eur,
+                    'price_30d_eur': price_30d_eur,
+                    'price_7d_sek': price_7d_sek,
+                    'price_30d_sek': price_30d_sek,
+                    'percent_change_100m': percent_change_100m,
+                    'percent_change_360m': percent_change_360m,
+                    'trend_30m_percent': trend_30m_percent,
+                    'trend_30m_text': trend_30m_text,
+                    'trend_30m_color': trend_30m_color,
+                    'percent_7d': percent_7d,
+                    'percent_30d': percent_30d,
+                    'time': current_time,
+                    'signal_rating': total_rating,
+                    'signal_text': signal_text,
+                    'signal_color': signal_color,
+                }
+                new_ratings[pair_ticker] = total_rating
+
+                # 8. Notis-logik (Här skulle notis-logiken placeras)
+                # ... (notify_spike, notify_diff, etc.) ...
+
+            # 9. Uppdatera signalratings för att matas in i Dash-callbacks
+            current_signal_ratings = new_ratings
+
+            # 10. Periodisk Sammanfattning
+            # ... (logik för notify_periodic_summary) ...
+
+            # 11. Excel-loggning var 5:e minut
+            # ... (log_data_to_excel) ...
+
+
+            # Loggar framgång för den fullständiga loopen
+            print(f"🟢 [OK] Datauppdatering slutförd för alla par. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+
+            # --- SLUT PÅ LÅST BLOCK ---
+            
+        # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
+        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
+
+
+
 # =========================================================================
 # === NYTT BLOCK: Säkerhets- och Prestandaförbättringar (Fixar headers) ===
 # =========================================================================
@@ -602,182 +782,6 @@ def create_dashboard_layout():
     ], style=GLOBAL_STYLE) 
 
 
-def background_data_collector():
-    """
-    DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
-    All skrivning till globala cacher sker inuti 'with data_lock:'.
-    """
-    global global_kpi_cache, SENT_NOTIFICATIONS, SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings, LAST_SUMMARY_SENT
-    
-    # Lokal räknare för OHLC/Excel-loggning
-    local_interval_counter = 0
-
-    print("---------------------------------------------------------")
-    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
-    print("---------------------------------------------------------")
-
-    # Koden för initial datainsamling (före while True) behöver också felhantering
-    initial_data_fetch = False
-    with data_lock:
-        if not global_kpi_cache:
-            initial_data_fetch = True
-            
-    if initial_data_fetch:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial datainsamling påbörjad...")
-        for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-            
-            # --- NY DIAGNOSTISK LOGG (Här kraschade det i din logg) ---
-            print(f"🟢 Försöker hämta Ticker för {pair_key} ({pair_ticker})...") 
-            # --------------------------
-            
-            ticker_data, error = get_crypto_data(pair_ticker)
-            
-            # --- Initial Datainsamling: FELHANTERING ---
-            if error:
-                print(f"🔴 [FEL] Initial Ticker-hämtning för {pair_key}: {error}") 
-                continue # Hoppa till nästa par
-
-            if ticker_data:
-                # ... (Resten av initial cashing logiken) ...
-                with data_lock:
-                    global_kpi_cache[pair_ticker] = {
-                        **ticker_data,
-                        'price_7d_eur': ticker_data['price_eur'],
-                        'price_30d_eur': ticker_data['price_eur'],
-                        'price_7d_sek': ticker_data['price_sek'],
-                        'price_30d_sek': ticker_data['price_sek'],
-                        'percent_change_100m': 0.0,
-                        'percent_change_360m': 0.0,
-                        'trend_30m_percent': 0.0,
-                        'trend_30m_color': '#555555',
-                        'time': datetime.now(),
-                        'signal_rating': 0,
-                        'signal_text': 'Väntar på historik',
-                        'signal_color': '#555555',
-                    }
-                    data_history[pair_ticker].append({
-                        'time': datetime.now(), 
-                        'price_sek': ticker_data['price_sek'],
-                        'price_eur': ticker_data['price_eur']
-                    })
-
-
-    while True:
-        
-        # Säkerställ att vi låser när vi skriver till delade globala variabler
-        with data_lock:
-            
-            # --- START PÅ LÅST BLOCK ---
-            
-            eur_sek_rate = get_eur_sek_rate()
-            current_time = datetime.now()
-            new_ratings = {}
-            print(f"\n--- Datauppdatering startad: {current_time.strftime('%Y-%m-%d %H:%M:%S')} ---")
-
-            local_interval_counter += 1
-            is_ohlc_update_time = local_interval_counter % 60 == 0 # Varje hel timme
-
-            # Första loop: Hämta Ticker-data, uppdatera historik, hämta OHLC
-            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-                
-                # 1. Hämta Ticker-data
-                ticker_data, error = get_crypto_data(pair_ticker)
-
-                # --- Huvudloop: Ticker FELHANTERING ---
-                if error:
-                    print(f"🔴 [FEL Ticker] {pair_key}: {error}") 
-                    continue # Hoppa till nästa par om fel uppstår
-                
-                cached_kpi = global_kpi_cache.get(pair_ticker, {})
-                current_price_sek = ticker_data['price_sek']
-                
-                # 2. Uppdatera lokal historik (Deque)
-                data_history[pair_ticker].append({
-                    'time': current_time, 
-                    'price_sek': ticker_data['price_sek'],
-                    'price_eur': ticker_data['price_eur']
-                })
-                local_history_list = list(data_history[pair_ticker]) 
-
-                # 3. Hämta/Uppdatera OHLC-data (Endast vid uppdatering)
-                price_7d_eur, price_7d_sek = cached_kpi.get('price_7d_eur'), cached_kpi.get('price_7d_sek')
-                price_30d_eur, price_30d_sek = cached_kpi.get('price_30d_eur'), cached_kpi.get('price_30d_sek')
-                
-                if is_ohlc_update_time:
-                    p7e, p7s, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
-                    if not error_7d:
-                        price_7d_eur, price_7d_sek = p7e, p7s
-                    else:
-                        print(f"🔴 [FEL OHLC 7d] {pair_key}: {error_7d}")
-                    
-                    p30e, p30s, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
-                    if not error_30d:
-                        price_30d_eur, price_30d_sek = p30e, p30s
-                    else:
-                        print(f"🔴 [FEL OHLC 30d] {pair_key}: {error_30d}")
-
-
-                # 4. Beräkna trend-KPI:er
-                trend_30m_percent, trend_30m_text, trend_30m_color = calculate_30min_trend(pair_ticker, local_history_list)
-                percent_change_100m = calculate_100min_change(local_history_list)
-                percent_change_360m = calculate_360min_change(local_history_list)
-
-                # 5. Skapa KPI-objekt för MTS-signal
-                mts_kpi_data = {
-                    'price_sek': current_price_sek,
-                    'high_24h_sek': ticker_data['high_24h_sek'],
-                    'low_24h_sek': ticker_data['low_24h_sek'],
-                    'price_7d_sek': price_7d_sek,
-                    'price_30d_sek': price_30d_sek,
-                    'percent_change_100m': percent_change_100m,
-                    'percent_change_360m': percent_change_360m,
-                }
-                
-                # 6. Beräkna MTS-signal
-                signal_text, total_rating, signal_color, percent_7d, percent_30d = generate_mts_signal(mts_kpi_data, local_history_list)
-                
-                # 7. Uppdatera global KPI cache
-                global_kpi_cache[pair_ticker] = {
-                    **ticker_data,
-                    'price_7d_eur': price_7d_eur,
-                    'price_30d_eur': price_30d_eur,
-                    'price_7d_sek': price_7d_sek,
-                    'price_30d_sek': price_30d_sek,
-                    'percent_change_100m': percent_change_100m,
-                    'percent_change_360m': percent_change_360m,
-                    'trend_30m_percent': trend_30m_percent,
-                    'trend_30m_text': trend_30m_text,
-                    'trend_30m_color': trend_30m_color,
-                    'percent_7d': percent_7d,
-                    'percent_30d': percent_30d,
-                    'time': current_time,
-                    'signal_rating': total_rating,
-                    'signal_text': signal_text,
-                    'signal_color': signal_color,
-                }
-                new_ratings[pair_ticker] = total_rating
-
-                # 8. Notis-logik (Här skulle notis-logiken placeras)
-                # ... (notify_spike, notify_diff, etc.) ...
-
-            # 9. Uppdatera signalratings för att matas in i Dash-callbacks
-            current_signal_ratings = new_ratings
-
-            # 10. Periodisk Sammanfattning
-            # ... (logik för notify_periodic_summary) ...
-
-            # 11. Excel-loggning var 5:e minut
-            # ... (log_data_to_excel) ...
-
-
-            # Loggar framgång för den fullständiga loopen
-            print(f"🟢 [OK] Datauppdatering slutförd för alla par. {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-
-            # --- SLUT PÅ LÅST BLOCK ---
-            
-        # Nödvändig paus för att undvika CPU-överbelastning och kontrollera uppdateringsfrekvensen
-        time.sleep(UPDATE_INTERVAL_SECONDS_DATA)
 
 
 # Följande funktion MÅSTE definieras globalt eftersom den används i callbacken
@@ -1208,40 +1212,6 @@ def update_graph(hidden_refresh, selected_ticker, selected_currency):
 # === NY FUNKTION: Bakgrundsinsamlare med Kritisk Felhantering ===
 # =========================================================================
 import traceback
-
-def background_data_collector():
-    """
-    Körs i en separat tråd för att kontinuerligt hämta data och bearbeta KPI:er.
-    Inkluderar robust felhantering för att logga eventuella krascher till Render-loggen.
-    """
-    print("---------------------------------------------------------")
-    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
-    print("---------------------------------------------------------")
-
-    # --- Initial datainsamling ---
-    print("[07:49:25] Initial datainsamling påbörjad...")
-    try:
-        # Denna funktion måste vara definierad i din kod och anropa Kraken/bearbeta data
-        collect_and_process_data() 
-        print(f"🟢 [UPPSTART OK] Initial datainhämtning slutförd.")
-    except Exception as e:
-        # KRITISK LOGGING: Fånga uppstartfel
-        print(f"🔴 [KRITISKT FEL] Initial datahämtning misslyckades: {e}")
-        traceback.print_exc()
-        return # Avslutar tråden om uppstart misslyckas
-
-    # --- Periodisk datahämtning ---
-    while True:
-        try:
-            time.sleep(60) # Vänta 60 sekunder
-            print("--- Datauppdatering startad ---") # Logg för att bekräfta att loopen körs
-            collect_and_process_data()
-            print("🟢 [OK] Datauppdatering slutförd för alla par...")
-        except Exception as e:
-            # KRITISK LOGGING: Fånga periodiska fel
-            print(f"🔴 [KRITISKT FEL] Periodisk datahämtning misslyckades: {e}")
-            traceback.print_exc()
-            time.sleep(300) # Vänta 5 minuter vid fel innan nytt försök
 
 
 # =========================================================================

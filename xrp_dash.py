@@ -171,10 +171,8 @@ def fetch_crypto_data():
             coin_symbol = label.split(' ')[0]
             coin_info = result_key.get(ticker)
             
-            # Fallback för tickers som har ett altname (t.ex. XBT istället för BTC)
             if coin_info is None:
                  for key, info in result_key.items():
-                    # Här använder vi 'altname' för att matcha symbolen i vår lista
                     if info.get('altname') == coin_symbol:
                         coin_info = info
                         break
@@ -252,7 +250,6 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
         blocks = config['blocks']
         
         if len(ohlc_data) >= blocks:
-            # Använder priset vid block-antalet bakåt som referens
             reference_price = ohlc_data[-blocks]['price'] 
             
             if reference_price and reference_price > 0:
@@ -331,6 +328,7 @@ def update_redis_cache(redis_instance):
                 percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
                 
                 if ohlc_5min_data:
+                    # HÄR SPARA VI NYCKELN MED "/" T.EX "XRP/EUR"
                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}' 
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                     logger.debug(f"   >>> OHLC 5-min sparad i cache för {ticker}")
@@ -546,9 +544,10 @@ def update_all_live_data(n, coin_symbol, currency):
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR') # Fallback
     
-    # Nyckeln i Redis är utan snedstreck, t.ex. XBT/EUR blir XBTEUR
+    # FIX: Använd samma nyckel som i update_redis_cache (med snedstreck om de finns)
+    # Ta INTE bort snedstreck här, eftersom bakgrundstråden inte gör det.
     ohlc_cache_key_prefix = f'OHLC_CACHED_{ohlc_interval}MIN_'
-    ohlc_cache_key = f'{ohlc_cache_key_prefix}{kraken_ticker.replace("/", "")}' 
+    ohlc_cache_key = f'{ohlc_cache_key_prefix}{kraken_ticker}' 
     
     historical_data = data.get(ohlc_cache_key)
     
@@ -724,7 +723,7 @@ def update_all_live_data(n, coin_symbol, currency):
                 usd_rate = data.get('EUR_USD_RATE', 1.08) # Använder mock/standard rate
                 current_price_loop = price_eur * usd_rate
                 high_24h = high_24h_eur * usd_rate if high_24h_eur is not None else None
-                low_24h = low_224h_eur * usd_rate if low_224h_eur is not None else None
+                low_24h = low_224h_eur * usd_rate if low_24h_eur is not None else None
             else:
                 current_price_loop = price_eur
                 high_24h = high_24h_eur

@@ -1,6 +1,6 @@
 # =========================================================================
 # === KRITISK FÖRSTA BLOCK: Nödvändiga Importer och Globala variabler ===
-# === (Simulering av Del 1, fixar NameErrors) ===
+# === FIXAT: Uppdaterade för att använda modern Dash v2+ syntax (dcc, html) ===
 # =========================================================================
 import copy
 from functools import lru_cache
@@ -17,9 +17,12 @@ from scipy.stats import linregress
 import numpy as np
 import dash
 from dash.dependencies import Input, Output
-import dash_core_components as dcc
-import dash_html_components as html
+# Rättat: Importerar dcc (dash_core_components) direkt från dash
+from dash import dcc 
+# Rättat: Importerar html (dash_html_components) direkt från dash
+from dash import html 
 import plotly.graph_objects as go
+
 
 # --- Globala inställningar och API-URL:er ---
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"

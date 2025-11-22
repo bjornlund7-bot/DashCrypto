@@ -100,7 +100,7 @@ ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # Tröskelvärden för Handelsvärde alerts (Endast positiva används i alert-logiken)
-TRADE_VALUE_ALERTS = sorted([7, 10, 20, 30, 50], reverse=True) 
+TRADE_VALUE_ALERTS = sorted([10, 20, 30, 50], reverse=True) 
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]

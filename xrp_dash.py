@@ -325,7 +325,7 @@ def update_redis_cache(redis_instance):
                 percent_changes.update(long_term_changes)
                 all_percent_changes[coin_symbol] = percent_changes
                 
-                time.sleep(2) 
+                time.sleep(0.2) 
             
             new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
             

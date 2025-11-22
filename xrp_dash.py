@@ -70,6 +70,9 @@ TIME_WINDOWS = {
 
 # Definiera listan för prisrörelser, baserat på TIME_WINDOWS keys
 PRICE_CHANGE_PERIODS = list(TIME_WINDOWS.keys())
+# Skapa en dictionary för Slider-labels
+SLIDER_LABELS = {i: period for i, period in enumerate(PRICE_CHANGE_PERIODS)}
+SLIDER_MAX = len(PRICE_CHANGE_PERIODS) - 1
 
 TREND_WINDOWS = {
     '1h': {'blocks': 12, 'color': '#ff7f0e', 'name': 'Trend (1h)'}, 
@@ -133,7 +136,7 @@ def send_telegram_alert(coin_label, price, currency, threshold):
         f"Valuta: {coin_label}\n"
         f"Gränsvärde: {threshold:,.4f} {currency}\n"
         f"Nuvarande pris: {price:,.4f} {currency}\n"
-        f"Tid: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} Lokal Tid"
+        f"Tid: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() + 3600))} Lokal Tid"
     )
 
     telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -390,7 +393,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     # Anropa den globala prisformateringsfunktionen
     price_text = f"{format_price_display(price)} {currency}"
     
-    # Prisfärg baserat på 24h-förändring
+    # Prisfärg baserat på 24h-förändring (Används för huvudpris)
     change_24h = percent_data.get('24h')
     price_color = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
     
@@ -398,61 +401,55 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     high_display = range_data.get('high_eur') * eur_rate if currency == 'SEK' and range_data.get('high_eur') is not None else range_data.get('high_eur')
     low_display = range_data.get('low_eur') * eur_rate if currency == 'SEK' and range_data.get('low_eur') is not None else range_data.get('low_eur')
 
-    # Dela upp tidsramarna för att göra tabellen mer kompakt
-    periods_col1 = ['30m', '1h', '3h', '6h']
-    periods_col2 = ['24h', '7d', '30d']
-    
-    # Skapa tabellrader för kolumn 1
-    table_rows_col1 = [
-        html.Tr([
-            html.Td(f"{p}:", style={'width': '50%', 'borderRight': '1px dotted #ccc'}),
-            html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
-        ]) for p in periods_col1
-    ]
-    
-    # Skapa tabellrader för kolumn 2
-    table_rows_col2 = [
-        html.Tr([
-            html.Td(f"{p}:", style={'width': '50%'}),
-            html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
-        ]) for p in periods_col2
-    ]
-
     return html.Div(
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
         children=[
+            # TOPP: Rubrik och huvudinfo
             html.H2(f"{label} ({symbol})", style={'fontSize': '1.8em', 'color': '#0056b3', 'marginBottom': '10px'}),
             html.Div(
-                style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'flexWrap': 'wrap'},
+                style={'display': 'flex', 'justifyContent': 'space-around', 'alignItems': 'center', 'flexWrap': 'wrap', 'borderBottom': '1px solid #dee2e6', 'paddingBottom': '15px', 'marginBottom': '15px'},
                 children=[
-                    # Pris
-                    html.Div(style={'minWidth': '180px'}, children=[
+                    # 1. Nuvarande Pris
+                    html.Div(style={'minWidth': '180px', 'textAlign': 'center'}, children=[
                         html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.P(price_text, style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
+                        html.P(price_text, id='current-price-display', style={'fontSize': '3.0em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
                     ]),
                     
-                    # 24h Intervall
-                    html.Div(style={'minWidth': '150px'}, children=[
+                    # 2. 24h Intervall
+                    html.Div(style={'minWidth': '150px', 'textAlign': 'center', 'padding': '0 10px'}, children=[
                         html.P("24h Intervall", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.Small(f"Hög: {format_price_display(high_display)} {currency}", style={'color': 'green', 'display': 'block'}),
                         html.Small(f"Låg: {format_price_display(low_display)} {currency}", style={'color': 'red', 'display': 'block'}),
                     ]),
+                ]
+            ),
+            
+            # BOTTEN: Prisrörelser (Ny rad med reglage)
+            html.Div(
+                style={'display': 'flex', 'flexDirection': 'column', 'gap': '10px'},
+                children=[
+                    html.P("Prisrörelse (%) över vald period:", style={'margin': '0', 'color': '#495057', 'fontWeight': 'bold'}),
                     
-                    # Prisrörelser (%) (Uppdelad i två kolumner för sju rader)
-                    html.Div(style={'minWidth': '200px'}, children=[
-                        html.P("Prisrörelser (%)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.Div(style={'display': 'flex', 'gap': '10px'}, children=[
-                            # Kolumn 1
-                            html.Table(style={'width': '50%', 'fontSize': '0.9em'}, children=[
-                                html.Tbody(table_rows_col1)
-                            ]),
-                            # Kolumn 2
-                            html.Table(style={'width': '50%', 'fontSize': '0.9em'}, children=[
-                                html.Tbody(table_rows_col2)
-                            ])
-                        ])
-                    ])
+                    # Visa vald period och förändring
+                    html.Div(id='current-change-output', style={'textAlign': 'center', 'fontSize': '1.5em', 'fontWeight': 'bold', 'minHeight': '30px'}, children=[
+                         # Initial laddning eller 24h data
+                         format_change(percent_data.get('24h')) 
+                    ]),
+                    
+                    # Reglage för att välja period
+                    dcc.Slider(
+                        id='change-period-slider',
+                        min=0,
+                        max=SLIDER_MAX,
+                        step=1,
+                        value=4, # Index för '24h' (0=30m, 1=1h, 2=3h, 3=6h, 4=24h...)
+                        marks=SLIDER_LABELS,
+                        className='mt-3', # Lägg till lite marginal
+                        tooltip={"always_visible": False, "placement": "top"},
+                    ),
+                    # Lagra all percent data osynligt (används av Slider callback)
+                    dcc.Store(id='percent-data-store', data=percent_data)
                 ]
             )
         ]
@@ -529,8 +526,11 @@ def update_all_live_data(n, coin_symbol, currency):
     timestamp = data.get('timestamp')
     current_price_eur = data.get(f'{coin_symbol}/EUR') 
     
+    # KORRIGERING: Lägg till 3600 sekunder för att kompensera för UTC/CET skillnaden
+    local_timestamp = timestamp + 3600 
+    
     # --- UPPDATERINGSTEXT ---
-    updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.localtime(timestamp))} Lokal tid (CET/CEST)"
+    updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
     
     # Hämta 24h intervall och %-förändring för den valda valutan
     range_data_raw = data.get('ALL_24H_RANGE', {}).get(coin_symbol, {})
@@ -578,8 +578,9 @@ def update_all_live_data(n, coin_symbol, currency):
         prices_display.append(current_price_display_currency)
         
         # Lägg till nuvarande tidpunkt till tidsaxeln (behövs för att matcha sista priset)
-        times = [time.strftime('%H:%M', time.localtime(item['time'])) for item in historical_data]
-        times.append(time.strftime('%H:%M', time.localtime(timestamp)))
+        # KORRIGERING: Lägg till 3600 sekunder (1 timme) för varje tidsstämpel i diagrammet
+        times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in historical_data]
+        times.append(time.strftime('%H:%M', time.gmtime(local_timestamp)))
         
         figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
         
@@ -614,7 +615,6 @@ def update_all_live_data(n, coin_symbol, currency):
     summary_cards = []
     card_style = {'flex': '0 1 calc(25% - 15px)', 'minWidth': '200px', 'padding': '15px', 'border': '1px solid #e0e0e0', 'borderRadius': '8px', 'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)', 'transition': 'transform 0.2s ease', 'cursor': 'pointer', 'boxSizing': 'border-box'}
     
-    # Använd den globalt definierade listan
     periods_to_show = PRICE_CHANGE_PERIODS
     
     for label in COINS_LABELS:
@@ -687,6 +687,37 @@ def update_all_live_data(n, coin_symbol, currency):
         summary_cards.append(card)
 
     return summary_box, updated_text, figure, summary_cards
+
+# Callback för att uppdatera prisrörelsen i huvudboxen baserat på Slider-position
+@app.callback(
+    Output('current-change-output', 'children'),
+    [Input('change-period-slider', 'value')],
+    [State('percent-data-store', 'data')]
+)
+def update_price_change_display(slider_value, percent_data):
+    if percent_data is None:
+        return html.Span("Laddar data...", style={'color': '#6c757d'})
+        
+    try:
+        # Hämta tidsperioden baserat på Slider-index
+        period_key = SLIDER_LABELS.get(slider_value)
+        if period_key is None:
+            return html.Span("Välj period", style={'color': '#6c757d'})
+            
+        change_value = percent_data.get(period_key)
+        
+        # Formatera utgången
+        change_element = format_change(change_value)
+        
+        return html.Span([
+            html.Span(f"{period_key}: ", style={'fontSize': '0.8em', 'fontWeight': 'normal', 'marginRight': '5px', 'color': '#495057'}),
+            change_element
+        ])
+        
+    except Exception as e:
+        logger.error(f"Fel vid uppdatering av prisrörelse-reglage: {e}")
+        return html.Span("Fel vid inläsning av prisrörelse", style={'color': '#dc3545'})
+
 
 # Callback för att uppdatera Dropdown när man klickar på ett summary-kort
 @app.callback(

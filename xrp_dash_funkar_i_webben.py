@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.DEBUG,
 logger = logging.getLogger(__name__)
 
 # [KONSTANTER]
+# OBS: Dessa måste sättas som miljövariabler i din Render/deployment-miljö
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -47,7 +48,6 @@ CRYPTO_PAIRS = {
     'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
 }
 
-# NY MAPPNING: Vald emoji för logotyp i displayen
 CRYPTO_EMOJIS = {
     'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳', 
     'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '🚀', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁', 
@@ -104,8 +104,8 @@ DEFAULT_DATA = {
     'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
     'timestamp': time.time(),
     'EUR_SEK_RATE': 11.0, 
-    'ALL_24H_RANGE_OHLC': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}}, # NYCKEL: OHLC-baserad
-    'ALL_OHLC_CACHED': {}, # NYCKEL: OHLC-data för diagrammet
+    'ALL_24H_RANGE_OHLC': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}}, 
+    'ALL_OHLC_CACHED': {}, 
     'ALL_PERCENT_CHANGE': {},
 }
 
@@ -131,7 +131,7 @@ def get_data_from_redis():
     return None
 
 def fetch_exchange_rate():
-    # ... (funktionen oförändrad) ...
+    """Hämtar EUR/SEK växelkurs."""
     try:
         response = requests.get(EXCHANGE_RATE_URL, timeout=10)
         response.raise_for_status()
@@ -157,7 +157,6 @@ def fetch_crypto_data():
             return DEFAULT_DATA
 
         result_key = kraken_data.get('result', {})
-        # NYCKELÄNDRING: ALL_24H_RANGE_OHLC läggs till senare
         current_data = {'timestamp': t, 'EUR_SEK_RATE': sek_rate, 'ALL_PERCENT_CHANGE': {}, 'ALL_OHLC_CACHED': {}, 'ALL_24H_RANGE_OHLC': {}}
         
         for label, ticker in CRYPTO_PAIRS.items():
@@ -183,10 +182,10 @@ def fetch_crypto_data():
         return DEFAULT_DATA
     except Exception as e:
         logger.error(f"❌ Oväntat fel i Ticker-hantering: {e}")
-        return DEFAULT_DATA
+        return DEFAULT_DATA 
 
 def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
-    # ... (funktionen oförändrad) ...
+    """Hämtar historisk OHLC (Open, High, Low, Close) data från Kraken."""
     time_ago = int(time.time()) - periods_ago_seconds 
     params = { 'pair': kraken_ticker, 'interval': interval, 'since': time_ago }
     try:
@@ -210,7 +209,7 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
         return []
 
 def calculate_percentage_changes(ohlc_data, current_price, periods):
-    # ... (funktionen oförändrad) ...
+    """Beräknar procentuell förändring baserat på OHLC data."""
     changes = {}
     if not ohlc_data or current_price is None or current_price == 0:
         return {key: None for key in periods}
@@ -221,6 +220,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
         blocks = config['blocks']
         interval = config['interval']
         
+        # Kontrollerar om vi har tillräckligt med data för perioden
         if (interval == OHLC_CACHE_INTERVAL_MIN and period in ['30m', '1h', '3h', '6h', '24h']) or \
            (interval == 1440 and period in ['7d', '30d']):
             
@@ -243,7 +243,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
 
 
 def calculate_trendline(historical_data, blocks):
-    # ... (funktionen oförändrad) ...
+    """Beräknar linjär trendlinje för en given datasegment."""
     if len(historical_data) < blocks:
         return None, None, None
     data_segment = historical_data[-blocks:]
@@ -257,7 +257,7 @@ def calculate_trendline(historical_data, blocks):
     return slope, intercept, start_index_global
 
 def format_change(c):
-    # ... (funktionen oförändrad) ...
+    """Formaterar procentuell förändring med färg och symbol."""
     if c is None: 
         return html.Span("N/A", style={'color': '#6c757d', 'fontWeight': 'normal'})
     
@@ -268,8 +268,34 @@ def format_change(c):
     symbol = '▲' if c > 0 else '▼'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
 
+# Hjälpfunktion för Telegram Alert
+def send_telegram_alert(coin_label, price, currency, threshold):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Telegram-tokens är inte konfigurerade. Alert skickas ej.")
+        return False
+        
+    message = (
+        f"🚨 KRYPTO ALERT 🚨\n"
+        f"Valuta: {coin_label}\n"
+        f"Pris: {format_price_display(price)} {currency}\n"
+        f"Gränsvärde uppnått: {format_price_display(threshold)} {currency}"
+    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message
+    }
+    
+    try:
+        response = requests.post(url, data=payload, timeout=10)
+        response.raise_for_status()
+        return response.json().get('ok', False)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Kunde inte skicka Telegram-meddelande: {e}")
+        return False
 
-# --- Bakgrundsjobb (UPPDATERAD LOGIK FÖR ALL OHLC-CACHING) ---
+
+# --- Bakgrundsjobb ---
 
 def background_data_fetch(redis_instance):
     """Hämtar Ticker och OHLC data och cachar till Redis."""
@@ -281,7 +307,6 @@ def background_data_fetch(redis_instance):
         try:
             logger.debug("--- Bakgrundstråd: Startar uppdateringscykel ---")
             
-            # 1. Hämta realtidsdata (Ticker)
             new_data = fetch_crypto_data()
             if not new_data or new_data == DEFAULT_DATA:
                 logger.warning("Misslyckades med att hämta aktuell tickerdata. Försöker igen senare.")
@@ -290,7 +315,7 @@ def background_data_fetch(redis_instance):
                 
             all_percent_changes = {}
             all_ohlc_cached = {}
-            all_24h_range_ohlc = {} # För att spara 24h OHLC Min/Max för alla kort
+            all_24h_range_ohlc = {} 
             
             # 2. Hämta OHLC-data, beräkna %-förändring OCH 24h Hög/Låg för ALLA VALUTOR
             for label, ticker in CRYPTO_PAIRS.items():
@@ -301,31 +326,28 @@ def background_data_fetch(redis_instance):
                     continue
                     
                 # a. Hämta 5-min OHLC (24h historik)
-                periods_ago_24h = 86400 # 24h i sekunder
+                periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
                 if ohlc_5min_data:
                     
-                    # Beräkna 24h Hög/Låg från OHLC-datan för korten (Krävs för synkronisering)
                     prices_eur = [item['price'] for item in ohlc_5min_data]
                     if prices_eur:
                         max_ohlc = max(prices_eur) 
                         min_ohlc = min(prices_eur)
                         all_24h_range_ohlc[coin_symbol] = {'high_eur': max_ohlc, 'low_eur': min_ohlc}
                     
-                    # Cachea OHLC-datan för den valda valutan (XRP) *ENDST* för att den ska vara tillgänglig i graf-callback
                     if coin_symbol == DEFAULT_PAIR_KEY.split(' ')[0]:
                          ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
                          redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                          
-                    # Beräkna korttidsprocentförändringar
                     short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
                     percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
                 else:
                     percent_changes = {k: None for k in PRICE_CHANGE_PERIODS if k in short_term_periods}
 
                 # b. Hämta 1-dag OHLC (för längre tidsramar 7d, 30d)
-                periods_ago_30d = 2592000 # 30 dagar i sekunder
+                periods_ago_30d = 2592000 
                 ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
                 long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
                 long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
@@ -336,9 +358,8 @@ def background_data_fetch(redis_instance):
                 time.sleep(0.1) 
             
             new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
-            new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc # SPARAR OHLC 24H FÖR ALLA KORT
+            new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc 
             
-            # 3. Cache till Redis (Ticker + %-förändringar + 24h OHLC-intervall)
             if redis_instance:
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
                 logger.debug("✅ Hela 'crypto_data' inkl procentrörelser och 24h OHLC-intervall sparad.")
@@ -365,7 +386,10 @@ app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnW
 server = app.server 
 
 def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur, low_eur, percent_data):
-    """Genererar den större sammanställningsboxen för den valda valutan. (OHLC data för 24h hög/låg)"""
+    """
+    Genererar den större sammanställningsboxen för den valda valutan, 
+    strukturerad i tre kompakta kolumner.
+    """
     
     price_text = f"{format_price_display(price)} {currency}"
     coin_emoji = CRYPTO_EMOJIS.get(symbol, '')
@@ -376,70 +400,165 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
     high_display = high_eur * eur_rate if currency == 'SEK' and high_eur is not None else high_eur
     low_display = low_eur * eur_rate if currency == 'SEK' and low_eur is not None else low_eur
 
-    periods_col1 = PRICE_CHANGE_PERIODS[:4] 
-    periods_col2 = PRICE_CHANGE_PERIODS[4:] 
+    periods_col1 = PRICE_CHANGE_PERIODS[0:4] # 30m, 1h, 3h, 6h
+    periods_col2 = PRICE_CHANGE_PERIODS[4:]  # 24h, 7d, 30d
 
     def create_change_display(period):
         return html.Div(
-            style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '5px 0', 'padding': '0 5px'},
+            style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px'},
             children=[
-                html.Span(f"{period}:", style={'color': '#6c757d', 'fontWeight': 'normal'}),
+                html.Span(f"{period}:", style={'color': '#6c757d', 'fontWeight': 'normal', 'fontSize': '0.9em'}),
                 format_change(percent_data.get(period))
             ]
         )
-
-    return html.Div(
-        id='current-price-box',
-        style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
+    
+    # --- KOLUMN 1: Namn & Pris ---
+    col1 = html.Div(
+        style={'flex': '1 1 30%', 'minWidth': '220px', 'paddingRight': '15px', 'borderRight': '1px solid #dee2e6'},
         children=[
-            # TOPP: Rubrik och huvudinfo (NU MED LOGO)
-            html.H2(html.Span([html.Span(f"{coin_emoji} ", style={'marginRight': '5px'}), f"{label} ({symbol})"]), style={'fontSize': '1.8em', 'color': '#0056b3', 'marginBottom': '10px'}),
-            html.Div(
-                style={'display': 'flex', 'justifyContent': 'space-around', 'alignItems': 'center', 'flexWrap': 'wrap', 'borderBottom': '1px solid #dee2e6', 'paddingBottom': '15px', 'marginBottom': '15px'},
-                children=[
-                    # 1. Nuvarande Pris
-                    html.Div(style={'minWidth': '180px', 'textAlign': 'center'}, children=[
-                        html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.P(price_text, id='current-price-display', style={'fontSize': '3.0em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
-                    ]),
-                    
-                    # 2. 24h Intervall (från OHLC-data, synkroniserad med grafen)
-                    html.Div(style={'minWidth': '150px', 'textAlign': 'center', 'padding': '0 10px'}, children=[
-                        html.P("24h Intervall (OHLC)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.Small(f"Hög: {format_price_display(high_display)} {currency}", style={'color': 'green', 'display': 'block'}),
-                        html.Small(f"Låg: {format_price_display(low_display)} {currency}", style={'color': 'red', 'display': 'block'}),
-                    ]),
-                ]
+            # Valutanamn
+            html.H2(
+                html.Span([html.Span(f"{coin_emoji} ", style={'marginRight': '5px'}), f"{label} ({symbol})"]), 
+                style={'fontSize': '1.5em', 'color': '#0056b3', 'marginBottom': '5px', 'textAlign': 'center'}
             ),
-            
-            # BOTTEN: Prisrörelser
+            # Pris
+            html.Div(style={'textAlign': 'center', 'marginTop': '10px'}, children=[
+                html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.9em'}),
+                html.P(price_text, id='current-price-display', style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
+            ]),
+        ]
+    )
+
+    # --- KOLUMN 2: 24h Intervall ---
+    col2 = html.Div(
+        style={'flex': '1 1 20%', 'minWidth': '150px', 'padding': '0 15px', 'borderRight': '1px solid #dee2e6'},
+        children=[
+            html.P("24h Intervall (OHLC)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
+            html.Div(style={'padding': '5px 0'}, children=[
+                html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '5px'}, children=[
+                    html.Span("Hög:", style={'fontWeight': 'bold', 'color': 'green', 'fontSize': '0.9em'}),
+                    html.Span(f"{format_price_display(high_display)} {currency}", style={'color': 'green', 'fontWeight': '600'})
+                ]),
+                html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center'}, children=[
+                    html.Span("Låg:", style={'fontWeight': 'bold', 'color': 'red', 'fontSize': '0.9em'}),
+                    html.Span(f"{format_price_display(low_display)} {currency}", style={'color': 'red', 'fontWeight': '600'})
+                ]),
+            ])
+        ]
+    )
+
+    # --- KOLUMN 3: Prisrörelser (%) ---
+    col3 = html.Div(
+        style={'flex': '1 1 45%', 'minWidth': '250px', 'paddingLeft': '15px'},
+        children=[
+            html.P("Prisrörelser (%)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
             html.Div(
-                style={'borderTop': '1px solid #dee2e6', 'paddingTop': '15px'},
+                style={'display': 'flex', 'justifyContent': 'space-around', 'gap': '10px'},
                 children=[
-                    html.P("Prisrörelser (%)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center'}),
+                    # Sub-Kolumn 1 (Korta perioder)
                     html.Div(
-                        style={'display': 'flex', 'justifyContent': 'space-around', 'gap': '10px', 'flexWrap': 'wrap'},
-                        children=[
-                            # Vänster kolumn (Kortare perioder)
-                            html.Div(
-                                style={'flex': '1 1 45%', 'minWidth': '150px', 'borderRight': '1px dotted #ccc', 'paddingRight': '10px'},
-                                children=[create_change_display(p) for p in periods_col1]
-                            ),
-                            # Höger kolumn (Längre perioder)
-                            html.Div(
-                                style={'flex': '1 1 45%', 'minWidth': '150px', 'paddingLeft': '10px'},
-                                children=[create_change_display(p) for p in periods_col2]
-                            ),
-                        ]
-                    )
+                        style={'flex': '1 1 45%', 'minWidth': '100px'},
+                        children=[create_change_display(p) for p in periods_col1]
+                    ),
+                    # Sub-Kolumn 2 (Långa perioder)
+                    html.Div(
+                        style={'flex': '1 1 45%', 'minWidth': '100px'},
+                        children=[create_change_display(p) for p in periods_col2]
+                    ),
                 ]
             )
         ]
     )
 
+    return html.Div(
+        id='current-price-box',
+        style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
+        children=[
+            html.Div(
+                style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'flex-start', 'flexWrap': 'wrap', 'gap': '10px'},
+                children=[col1, col2, col3]
+            )
+        ]
+    )
+
+# --- NY FUNKTION FÖR RAD-RENDERARE ---
+
+def create_summary_row(coin_symbol, label, current_price, high_24h, low_24h, percent_data, currency, is_selected, eur_to_sek):
+    """Skapar en enskild rad för list/tabellvyn."""
+    
+    coin_emoji = CRYPTO_EMOJIS.get(coin_symbol, '')
+    
+    # Prisförändring 24h
+    change_24h = percent_data.get('24h')
+    change_24h_display = format_change(change_24h)
+    
+    # Färgkodning baserad på val
+    row_bg_color = '#f0f8ff' if is_selected else 'white'
+    
+    # Konvertera priser till displayvaluta
+    price_display = current_price * eur_to_sek if currency == 'SEK' and current_price is not None else current_price
+    high_display = high_24h * eur_to_sek if currency == 'SEK' and high_24h is not None else high_24h
+    low_display = low_24h * eur_to_sek if currency == 'SEK' and low_24h is not None else low_24h
+    
+    # Rad layout (simulerar en tabellrad med Divs)
+    row_columns = [
+        # Valuta (Klickbar)
+        html.Div(
+            style={'flex': '0 0 160px', 'textAlign': 'left', 'fontWeight': 'bold', 'color': '#0056b3'},
+            children=[html.Span(f"{coin_emoji} {label}", style={'whiteSpace': 'nowrap'})]
+        ),
+        # Pris
+        html.Div(
+            f"{format_price_display(price_display)} {currency}",
+            style={'flex': '0 0 120px', 'textAlign': 'right', 'fontWeight': 'bold'}
+        ),
+        # 24h % Förändring
+        html.Div(
+            change_24h_display,
+            style={'flex': '0 0 100px', 'textAlign': 'right'}
+        ),
+        # 24h Hög (OHLC)
+        html.Div(
+            f"{format_price_display(high_display)}",
+            style={'flex': '0 0 120px', 'textAlign': 'right', 'color': 'green'}
+        ),
+        # 24h Låg (OHLC)
+        html.Div(
+            f"{format_price_display(low_display)}",
+            style={'flex': '0 0 120px', 'textAlign': 'right', 'color': 'red'}
+        ),
+        # KORTA PERIODER (%)
+        html.Div(format_change(percent_data.get('30m')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        html.Div(format_change(percent_data.get('1h')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        html.Div(format_change(percent_data.get('3h')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        # LÅNGA PERIODER (%)
+        html.Div(format_change(percent_data.get('7d')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        html.Div(format_change(percent_data.get('30d')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+    ]
+
+    return html.Div(
+        id={'type': 'summary-card', 'index': coin_symbol},
+        n_clicks=0,
+        style={
+            'display': 'flex',
+            'justifyContent': 'space-between',
+            'alignItems': 'center',
+            'padding': '10px 15px',
+            'borderBottom': '1px solid #eee',
+            'cursor': 'pointer',
+            'backgroundColor': row_bg_color,
+            'transition': 'background-color 0.2s ease, box-shadow 0.2s ease',
+            'flexWrap': 'wrap',
+            'boxShadow': '0 1px 2px rgba(0,0,0,0.05)' if is_selected else 'none'
+        },
+        children=row_columns
+    )
+
+
 app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
-    # NAMNBYTE HÄR
     html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
+        
+        # 1. Namnbyte implementerat
         html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
         
         # Kontroller
@@ -454,7 +573,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             ]),
         ]),
         
-        # SAMMANFATTNINGSBOXEN
+        # SAMMANFATTNINGSBOXEN (Huvudboxen)
         html.Div(id='current-price-summary-box-container'),
         
         html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '20px'}),
@@ -486,10 +605,10 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             html.Div(id='alert-output', style={'marginTop': '10px', 'fontSize': '0.9em', 'minHeight': '20px'})
         ]),
         
-        # Sammanfattning av alla valutor (Lista/kort)
+        # Sammanfattning av alla valutor (Nu som lista/tabell)
         html.Div(style={'marginTop': '50px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
-            html.H3('📊 Sammanfattning av alla valutor', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '20px'}),
-            dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary', style={'display': 'flex', 'flexWrap': 'wrap', 'gap': '15px', 'justifyContent': 'flex-start'})])
+            html.H3('📊 Sammanfattning av alla valutor', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
+            dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
         ]),
     ]),
     dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
@@ -497,13 +616,18 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
 
 # --- Callbacks ---
 
+# Huvud-Callback: Uppdaterar all live data
 @app.callback(
+    # OUTPUTS MÅSTE VARA SEPARATA ARGUMENT FÖR ATT UNDVIKA KEYERROR
     Output('current-price-summary-box-container', 'children'), 
     Output('last-updated', 'children'),
     Output('chart-data-store', 'data'), 
     Output('current-currency-store', 'data'), 
     Output('crypto-summary', 'children'),
-    [Input('interval-component', 'n_intervals'), Input('coin-dropdown', 'value'), Input('currency-dropdown', 'value')]
+    
+    [Input('interval-component', 'n_intervals'), 
+     Input('coin-dropdown', 'value'), 
+     Input('currency-dropdown', 'value')]
 )
 def update_all_live_data(n, coin_symbol, currency):
     data = get_data_from_redis()
@@ -525,12 +649,10 @@ def update_all_live_data(n, coin_symbol, currency):
     updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
     
     percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol, {})
+    all_24h_range_ohlc = data.get('ALL_24H_RANGE_OHLC', {})
+    selected_coin_24h_range = all_24h_range_ohlc.get(coin_symbol, {})
     
-    # --- Förbered OHLC data för grafen och Store (endast för den valda krypton) ---
-    max_ohlc = None
-    min_ohlc = None
-    
-    # Hämta historisk data för den valda valutan från Redis-cachen (för graf och hög/låg)
+    # --- Förbered OHLC data för grafen och Store ---
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
@@ -538,6 +660,7 @@ def update_all_live_data(n, coin_symbol, currency):
     historical_data_json = r.get(ohlc_cache_key) if r else None
     historical_data = json.loads(historical_data_json) if historical_data_json else []
     
+    chart_data_store = None
     if historical_data and current_price_eur is not None:
         historical_data.append({'time': timestamp, 'price': current_price_eur})
         prices_eur = [item['price'] for item in historical_data]
@@ -552,14 +675,8 @@ def update_all_live_data(n, coin_symbol, currency):
             'eur_to_sek': eur_to_sek,
             'coin_symbol': coin_symbol
         }
-    else:
-        chart_data_store = None
-        
-    # Använd OHLC 24h data från cache för sammanfattningsboxen
-    all_24h_range_ohlc = data.get('ALL_24H_RANGE_OHLC', {})
-    selected_coin_24h_range = all_24h_range_ohlc.get(coin_symbol, {})
     
-    # 1. GENERERA SAMMANFATTNINGSBOXEN (med OHLC-Max/Min och Emoji)
+    # 1. GENERERA SAMMANFATTNINGSBOXEN
     if current_price_display_currency is not None:
         summary_box = create_selected_coin_box(
             coin_label, coin_symbol, 
@@ -572,86 +689,60 @@ def update_all_live_data(n, coin_symbol, currency):
     else:
         summary_box = create_selected_coin_box(coin_label, coin_symbol, 0.0, currency, eur_to_sek, None, None, percent_data)
         
-    # 2. GENERERA SAMMANFATTNINGSKORTEN (med OHLC-Max/Min)
-    summary_cards = []
-    card_style = {'flex': '0 1 calc(25% - 15px)', 'minWidth': '200px', 'padding': '15px', 'border': '1px solid #e0e0e0', 'borderRadius': '8px', 'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)', 'transition': 'transform 0.2s ease', 'cursor': 'pointer', 'boxSizing': 'border-box'}
-    periods_to_show = PRICE_CHANGE_PERIODS
+    # 2. GENERERA SAMMANFATTNINGS-LISTA/TABELL
+    
+    # Skapa rubrikraden
+    header_style = {
+        'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 
+        'padding': '10px 15px', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0',
+        'marginBottom': '5px', 'color': '#495057', 'flexWrap': 'wrap', 'fontSize': '0.9em'
+    }
+    
+    header_columns = [
+        html.Div("Valuta", style={'flex': '0 0 160px', 'textAlign': 'left'}),
+        html.Div(f"Pris ({currency})", style={'flex': '0 0 120px', 'textAlign': 'right'}),
+        html.Div("24h %", style={'flex': '0 0 100px', 'textAlign': 'right'}),
+        html.Div("24h Hög", style={'flex': '0 0 120px', 'textAlign': 'right'}),
+        html.Div("24h Låg", style={'flex': '0 0 120px', 'textAlign': 'right'}),
+        html.Div("30m", style={'flex': '0 0 80px', 'textAlign': 'right', 'title': '30 minuters förändring'}),
+        html.Div("1h", style={'flex': '0 0 80px', 'textAlign': 'right', 'title': '1 timmes förändring'}),
+        html.Div("3h", style={'flex': '0 0 80px', 'textAlign': 'right', 'title': '3 timmars förändring'}),
+        html.Div("7d", style={'flex': '0 0 80px', 'textAlign': 'right', 'title': '7 dagars förändring'}),
+        html.Div("30d", style={'flex': '0 0 80px', 'textAlign': 'right', 'title': '30 dagars förändring'}),
+    ]
+    
+    summary_header = html.Div(header_columns, style=header_style)
+    
+    # Skapa listan med rader
+    summary_rows = []
     
     for label in COINS_LABELS:
         coin_symbol_loop = label.split(' ')[0]
         price_eur = data.get(f'{coin_symbol_loop}/EUR')
-        range_data_ohlc = all_24h_range_ohlc.get(coin_symbol_loop, {}) # OHLC-baserad
+        range_data_ohlc = all_24h_range_ohlc.get(coin_symbol_loop, {})
         percent_data_loop = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol_loop, {})
-        high_24h_eur = range_data_ohlc.get('high_eur')
-        low_224h_eur = range_data_ohlc.get('low_eur')
-        coin_emoji = CRYPTO_EMOJIS.get(coin_symbol_loop, '')
-
-        current_price_loop = None
-        high_24h = None
-        low_24h = None
         
-        if price_eur is not None:
-            if currency == 'SEK':
-                current_price_loop = price_eur * eur_to_sek
-                high_24h = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
-                low_24h = low_224h_eur * eur_to_sek if low_224h_eur is not None else None
-            else:
-                current_price_loop = price_eur
-                high_24h = high_24h_eur
-                low_24h = low_224h_eur
-            
-            formatted_price = format_price_display(current_price_loop)
-            formatted_high = format_price_display(high_24h)
-            formatted_low = format_price_display(low_24h)
-            price_text_loop = f"{formatted_price} {currency}"
-            
-        else:
-            price_text_loop = "N/A"
-            formatted_high = "N/A"
-            formatted_low = "N/A"
-            
-        change_24h = percent_data_loop.get('24h')
-        price_color_loop = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
+        is_selected = coin_symbol_loop == coin_symbol
         
-        card_border_style = '2px solid #0056b3' if coin_symbol_loop == coin_symbol else '1px solid #e0e0e0'
-        
-        card_content = [
-            # Rubrik med Emoji
-            html.P(html.Span([html.Span(f"{coin_emoji} ", style={'marginRight': '5px'}), label]), style={'margin': '0 0 5px 0', 'fontSize': '1.1em', 'fontWeight': '500', 'color': '#0056b3'}),
-            html.P(price_text_loop, style={'margin': '0 0 10px 0', 'fontSize': '1.4em', 'fontWeight': 'bold', 'color': price_color_loop}),
-            html.Div(style={'borderTop': '1px solid #f0f0f0', 'paddingTop': '10px', 'marginBottom': '10px'}, children=[
-                html.Small("Prisrörelse:", style={'color': '#6c757d', 'fontWeight': 'bold', 'display': 'block', 'marginBottom': '5px'}),
-                html.Table(style={'width': '100%', 'fontSize': '0.9em', 'borderCollapse': 'collapse'}, children=[
-                    html.Tbody([
-                        html.Tr(children=[
-                            html.Td(f"{period}:", style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'width': '50%'}),
-                            html.Td(format_change(percent_data_loop.get(period)), style={'padding': '3px 5px', 'borderBottom': '1px dotted #e0e0e0', 'textAlign': 'right'})
-                        ]) for period in periods_to_show
-                    ])
-                ])
-            ]),
-            # Nu OHLC-baserad 24h data
-            html.Small("24h Högsta (OHLC):", style={'color': '#6c757d', 'display': 'block', 'marginTop': '5px'}),
-            html.Small(f"{formatted_high} {currency}", style={'color': 'green', 'fontWeight': 'bold', 'display': 'block'}),
-            html.Small("24h Lägsta (OHLC):", style={'color': '#6c757d', 'marginTop': '5px', 'display': 'block'}),
-            html.Small(f"{formatted_low} {currency}", style={'color': 'red', 'fontWeight': 'bold', 'display': 'block'}),
-        ]
-        
-        card = html.Div(
-            id={'type': 'summary-card', 'index': coin_symbol_loop},
-            style={**card_style, 'border': card_border_style}, 
-            children=card_content,
-            n_clicks=0, 
-            title=f"Klicka för att se {label} i diagrammet."
+        summary_row = create_summary_row(
+            coin_symbol=coin_symbol_loop,
+            label=label,
+            current_price=price_eur,
+            high_24h=range_data_ohlc.get('high_eur'),
+            low_24h=range_data_ohlc.get('low_eur'),
+            percent_data=percent_data_loop,
+            currency=currency,
+            is_selected=is_selected,
+            eur_to_sek=eur_to_sek
         )
-        summary_cards.append(card)
+        summary_rows.append(summary_row)
+        
+    summary_list_view = html.Div([summary_header] + summary_rows, style={'border': '1px solid #ccc', 'borderRadius': '8px', 'overflow': 'hidden'})
 
-    return summary_box, updated_text, chart_data_store, currency, summary_cards
+    return summary_box, updated_text, chart_data_store, currency, summary_list_view
 
-# ... (update_trendline_visibility och de andra callbacks oförändrade) ...
-# Använd de oförändrade callbacks från föregående steg
 
-# Callback för grafen (oförändrad från föregående steg, den använder data från chart-data-store)
+# Callback för grafen (oförändrad)
 @app.callback(
     Output('live-update-graph', 'figure'),
     [Input('chart-data-store', 'data'), Input('current-currency-store', 'data'), Input('trendline-checkboxes', 'value')],
@@ -673,7 +764,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     
     figure = go.Figure()
 
-    # KONVERTERING
     if currency == 'SEK':
         prices_display = [item['price'] * eur_to_sek for item in historical_data]
         high_24h_display = max_ohlc_eur * eur_to_sek if max_ohlc_eur is not None else None
@@ -683,34 +773,24 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         high_24h_display = max_ohlc_eur
         low_24h_display = min_ohlc_eur
     
-    # KORRIGERING: Lägg till 3600 sekunder (1 timme) för varje tidsstämpel i diagrammet
+    # Lägg till 1 timme för att konvertera UTC till CET/CEST
     times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in historical_data]
     
-    # Huvudkurslinjen
     figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
     
-    # 24h Högsta/Lägsta linjer (BASERAT PÅ OHLC-DATA)
     if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"OHLC Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
     if low_24h_display: figure.add_hline(y=low_24h_display, line_dash="dot", line_color="red", annotation_text=f"OHLC Lägsta: {format_price_display(low_24h_display)} {currency}", annotation_position="bottom right")
 
-    # Trendlinjer (filtrerade baserat på checkbox)
     for trend_key, config in TREND_WINDOWS.items():
         if trend_key in selected_trends: 
             blocks = config['blocks']
-            
-            # Använd den historiska datan UTAN det sista aktuella priset för trendberäkning
             data_for_trend = historical_data[:-1] if len(historical_data) > 0 else [] 
-            
             slope, intercept, start_index = calculate_trendline(data_for_trend, blocks)
             
             if slope is not None and start_index is not None:
                 trend_x_indices = np.arange(blocks)
                 trend_y_eur = slope * trend_x_indices + intercept
-                
-                # Konvertera trendlinjen till displayvaluta
                 trend_y_display = trend_y_eur * eur_to_sek if currency == 'SEK' else trend_y_eur
-                
-                # Tidpunkterna måste matcha segmentet vi beräknat trenden för
                 trend_times = times[start_index:start_index + blocks]
                 
                 figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dot'), hoverinfo='x+y'))
@@ -719,7 +799,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
 
     return figure
 
-# Callback för att uppdatera Dropdown när man klickar på ett summary-kort
+# Callback för att uppdatera Dropdown när man klickar på en rad
 @app.callback(
     Output('coin-dropdown', 'value'),
     [Input({'type': 'summary-card', 'index': dash.dependencies.ALL}, 'n_clicks')],
@@ -743,7 +823,7 @@ def update_dropdown_on_card_click(n_clicks, ids):
     except (json.JSONDecodeError, KeyError):
         raise dash.exceptions.PreventUpdate
 
-# Callback för Telegram Alert (oförändrad)
+# Callback för Telegram Alert
 @app.callback(
     Output('alert-output', 'children'), 
     [Input('alert-button', 'n_clicks')], 

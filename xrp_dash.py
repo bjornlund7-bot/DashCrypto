@@ -96,7 +96,7 @@ TREND_WINDOWS = {
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
 ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75]) 
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
-ALERT_DEBOUNCE_SECONDS = 4 * 3600 # 4 timmar
+ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme (ÄNDRAD FRÅN 4 * 3600)
 
 # [REDIS KONFIGURATION]
 REDIS_URL = os.environ.get('REDIS_URL')
@@ -179,6 +179,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     summary_data.sort(key=lambda x: (x['sort_30m'], x['sort_1h'], x['sort_6h']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
+    timezone_offset_hours = 1 if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()) or (now_utc.month == 10 and now_utc.day <= 31) else 1
     now_local = now_utc + timedelta(hours=timezone_offset_hours)
     
     header = (
@@ -354,8 +355,6 @@ def send_telegram_message(message): # (oförändrad)
         logger.error(f"Kunde inte skicka Telegram-meddelande: {e}")
         return False
 
-# ... (övriga hjälpfunktioner oförändrade)
-
 # MODIFIERAD FUNKTION: background_data_fetch
 def background_data_fetch(redis_instance):
     """Hämtar Ticker och OHLC data, beräknar förändringar och cachar till Redis. KÖR ÄVEN ALERTER."""
@@ -396,12 +395,9 @@ def background_data_fetch(redis_instance):
                         min_ohlc = min(prices_eur)
                         all_24h_range_ohlc[coin_symbol] = {'high_eur': max_ohlc, 'low_eur': min_ohlc}
                     
-                    # -------------------------------------------------------------
                     # NYCKELÄNDRING FÖR ATT CACHA OHLC-DATA FÖR ALLA VALUTOR
-                    # Detta löser problemet där grafen bara laddades för XRP.
                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
-                    # -------------------------------------------------------------
                          
                     short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
                     percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
@@ -517,7 +513,7 @@ def background_summary_sender(redis_instance): # (oförändrad)
     while True:
         try:
             now_utc = datetime.now(timezone.utc)
-            timezone_offset_hours = 1 if now_utc.month in range(3, 10) else 1 
+            timezone_offset_hours = 1 if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()) or (now_utc.month == 10 and now_utc.day <= 31) else 1
             now_local = now_utc + timedelta(hours=timezone_offset_hours)
             
             current_hour = now_local.hour
@@ -753,7 +749,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                     html.Ul([html.Li(f'{t}%') for t in ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px'})
                 ])
             ]),
-            html.P(f"Obs! Samma alert skickas max en gång per {ALERT_DEBOUNCE_SECONDS / 3600:.0f} timmar.", style={'fontSize': '0.9em', 'color': '#6c757d', 'marginTop': '10px'}),
+            html.P(f"Obs! Samma alert skickas max en gång per {ALERT_DEBOUNCE_SECONDS / 3600:.0f} timme.", style={'fontSize': '0.9em', 'color': '#6c757d', 'marginTop': '10px'}),
             html.P(f"**Schemalagda sammanställningar skickas kl: {', '.join([f'{h:02d}:00' for h in SUMMARY_SCHEDULE_HOURS])} (CET/CEST)**", style={'fontSize': '0.9em', 'color': '#17a2b8', 'marginTop': '10px', 'fontWeight': 'bold'}),
         ]),
     ]),
@@ -796,7 +792,7 @@ def update_all_live_data(n, coin_symbol, currency):
     
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     
-    # KORRIGERING: Hämta rätt ticker för den valda valutan
+    # Hämta ticker baserat på den valda valutan
     selected_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{selected_ticker}' 
     

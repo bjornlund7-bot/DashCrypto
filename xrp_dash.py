@@ -70,9 +70,6 @@ TIME_WINDOWS = {
 
 # Definiera listan för prisrörelser, baserat på TIME_WINDOWS keys
 PRICE_CHANGE_PERIODS = list(TIME_WINDOWS.keys())
-# Skapa en dictionary för Slider-labels
-SLIDER_LABELS = {i: period for i, period in enumerate(PRICE_CHANGE_PERIODS)}
-SLIDER_MAX = len(PRICE_CHANGE_PERIODS) - 1
 
 TREND_WINDOWS = {
     '1h': {'blocks': 12, 'color': '#ff7f0e', 'name': 'Trend (1h)'}, 
@@ -131,12 +128,15 @@ def send_telegram_alert(coin_label, price, currency, threshold):
         logger.error("Kan inte skicka Telegram-meddelande: Bot Token eller Chat ID saknas.")
         return False
         
+    # Använder time.gmtime och lägger till 3600s för att få CEST/CET
+    local_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() + 3600))
+
     message = (
         f"🚨 Krypto Alert: Prisgräns nådd! 🚨\n\n"
         f"Valuta: {coin_label}\n"
         f"Gränsvärde: {threshold:,.4f} {currency}\n"
         f"Nuvarande pris: {price:,.4f} {currency}\n"
-        f"Tid: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() + 3600))} Lokal Tid"
+        f"Tid: {local_time_str} Lokal Tid"
     )
 
     telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -401,6 +401,20 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     high_display = range_data.get('high_eur') * eur_rate if currency == 'SEK' and range_data.get('high_eur') is not None else range_data.get('high_eur')
     low_display = range_data.get('low_eur') * eur_rate if currency == 'SEK' and range_data.get('low_eur') is not None else range_data.get('low_eur')
 
+    # Skapa listan med prisrörelser (återanvänder format_change)
+    # Dela upp i två kolumner för att få en kompakt rad längst ner.
+    periods_col1 = PRICE_CHANGE_PERIODS[:4] # 30m, 1h, 3h, 6h
+    periods_col2 = PRICE_CHANGE_PERIODS[4:] # 24h, 7d, 30d
+
+    def create_change_display(period):
+        return html.Div(
+            style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '5px 0', 'padding': '0 5px'},
+            children=[
+                html.Span(f"{period}:", style={'color': '#6c757d', 'fontWeight': 'normal'}),
+                format_change(percent_data.get(period))
+            ]
+        )
+
     return html.Div(
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
@@ -425,31 +439,26 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
                 ]
             ),
             
-            # BOTTEN: Prisrörelser (Ny rad med reglage)
+            # BOTTEN: Prisrörelser (Ny rad med alla perioder)
             html.Div(
-                style={'display': 'flex', 'flexDirection': 'column', 'gap': '10px'},
+                style={'borderTop': '1px solid #dee2e6', 'paddingTop': '15px'},
                 children=[
-                    html.P("Prisrörelse (%) över vald period:", style={'margin': '0', 'color': '#495057', 'fontWeight': 'bold'}),
-                    
-                    # Visa vald period och förändring
-                    html.Div(id='current-change-output', style={'textAlign': 'center', 'fontSize': '1.5em', 'fontWeight': 'bold', 'minHeight': '30px'}, children=[
-                         # Initial laddning eller 24h data
-                         format_change(percent_data.get('24h')) 
-                    ]),
-                    
-                    # Reglage för att välja period
-                    dcc.Slider(
-                        id='change-period-slider',
-                        min=0,
-                        max=SLIDER_MAX,
-                        step=1,
-                        value=4, # Index för '24h' (0=30m, 1=1h, 2=3h, 3=6h, 4=24h...)
-                        marks=SLIDER_LABELS,
-                        className='mt-3', # Lägg till lite marginal
-                        tooltip={"always_visible": False, "placement": "top"},
-                    ),
-                    # Lagra all percent data osynligt (används av Slider callback)
-                    dcc.Store(id='percent-data-store', data=percent_data)
+                    html.P("Prisrörelser (%)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center'}),
+                    html.Div(
+                        style={'display': 'flex', 'justifyContent': 'space-around', 'gap': '10px', 'flexWrap': 'wrap'},
+                        children=[
+                            # Vänster kolumn (Kortare perioder)
+                            html.Div(
+                                style={'flex': '1 1 45%', 'minWidth': '150px', 'borderRight': '1px dotted #ccc', 'paddingRight': '10px'},
+                                children=[create_change_display(p) for p in periods_col1]
+                            ),
+                            # Höger kolumn (Längre perioder)
+                            html.Div(
+                                style={'flex': '1 1 45%', 'minWidth': '150px', 'paddingLeft': '10px'},
+                                children=[create_change_display(p) for p in periods_col2]
+                            ),
+                        ]
+                    )
                 ]
             )
         ]
@@ -596,7 +605,8 @@ def update_all_live_data(n, coin_symbol, currency):
                 trend_y_display = trend_y_eur * eur_to_sek if currency == 'SEK' else trend_y_eur
                 trend_times = times[start_index:start_index + blocks]
                 
-                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash'), hoverinfo='x+y'))
+                # KORRIGERING: Ändra line.dash till 'dot'
+                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dot'), hoverinfo='x+y'))
 
         # 24h Högsta/Lägsta linjer (använder den globala format_price_display)
         if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"24h Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
@@ -688,36 +698,7 @@ def update_all_live_data(n, coin_symbol, currency):
 
     return summary_box, updated_text, figure, summary_cards
 
-# Callback för att uppdatera prisrörelsen i huvudboxen baserat på Slider-position
-@app.callback(
-    Output('current-change-output', 'children'),
-    [Input('change-period-slider', 'value')],
-    [State('percent-data-store', 'data')]
-)
-def update_price_change_display(slider_value, percent_data):
-    if percent_data is None:
-        return html.Span("Laddar data...", style={'color': '#6c757d'})
-        
-    try:
-        # Hämta tidsperioden baserat på Slider-index
-        period_key = SLIDER_LABELS.get(slider_value)
-        if period_key is None:
-            return html.Span("Välj period", style={'color': '#6c757d'})
-            
-        change_value = percent_data.get(period_key)
-        
-        # Formatera utgången
-        change_element = format_change(change_value)
-        
-        return html.Span([
-            html.Span(f"{period_key}: ", style={'fontSize': '0.8em', 'fontWeight': 'normal', 'marginRight': '5px', 'color': '#495057'}),
-            change_element
-        ])
-        
-    except Exception as e:
-        logger.error(f"Fel vid uppdatering av prisrörelse-reglage: {e}")
-        return html.Span("Fel vid inläsning av prisrörelse", style={'color': '#dc3545'})
-
+# (Den gamla Slider-callbacken är borttagen, den nya logiken är inbäddad i create_selected_coin_box)
 
 # Callback för att uppdatera Dropdown när man klickar på ett summary-kort
 @app.callback(

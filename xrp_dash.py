@@ -170,12 +170,15 @@ def fetch_crypto_data():
             coin_symbol = label.split(' ')[0]
             coin_info = result_key.get(ticker)
             
+            # Fallback check for alternate name if direct match fails
             if coin_info is None:
-                 for key, info in result_key.items():
-                    if info.get('altname') == coin_symbol:
+                for key, info in result_key.items():
+                     # Kraken returns altname, but sometimes the key itself is the altname, 
+                     # but we rely on the input pair mapping
+                     if key == ticker:
                         coin_info = info
                         break
-            
+
             if coin_info:
                 try:
                     price_eur = float(coin_info['c'][0])
@@ -226,22 +229,29 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
         return []
 
 def calculate_percentage_changes(ohlc_data, current_price, periods):
-    """Beräknar procentuell förändring baserat på historisk OHLC-data."""
+    """
+    Beräknar procentuell förändring baserat på historisk OHLC-data.
+    Returnerar None om data saknas, 0.0 för 0% förändring.
+    """
     changes = {}
     if not ohlc_data or current_price is None or current_price == 0:
-        return {key: 0.0 for key in periods}
+        # Return None if data is missing/invalid to display 'N/A'
+        return {key: None for key in periods}
 
     for period, config in periods.items():
         blocks = config['blocks']
         if len(ohlc_data) >= blocks:
-            reference_price = ohlc_data[-blocks]['price'] 
+            # -blocks refers to the item 'blocks' periods ago.
+            reference_price = ohlc_data[-blocks]['price']
             if reference_price and reference_price > 0:
                 change = ((current_price - reference_price) / reference_price) * 100
                 changes[period] = change
             else:
-                changes[period] = 0.0
+                # Historical price is zero or missing, cannot calculate
+                changes[period] = None 
         else:
-            changes[period] = 0.0 
+            # Not enough historical data points
+            changes[period] = None 
     return changes
 
 def calculate_trendline(historical_data, blocks):
@@ -255,9 +265,14 @@ def calculate_trendline(historical_data, blocks):
     return slope, intercept, start_index_global
 
 def format_change(c):
-    """Global format funktion."""
-    if c is None or c == 0.0: 
+    """Global format funktion. Visar N/A för None, 0.00% för 0.0."""
+    if c is None: 
         return html.Span("N/A", style={'color': '#6c757d'})
+    
+    # Explicitly check for 0.0 to differentiate from missing data
+    if c == 0.0:
+        return html.Span("0.00%", style={'color': '#6c757d', 'fontWeight': 'bold'})
+        
     color = '#10b981' if c > 0 else '#ef4444'
     symbol = '▲' if c > 0 else '▼'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
@@ -275,6 +290,7 @@ def update_redis_cache(redis_instance):
             
             new_data = fetch_crypto_data()
             if redis_instance:
+                # Cache Ticker data quickly
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
                 logger.debug("✅ Prisdata (Ticker) sparad snabbt.")
 
@@ -288,6 +304,7 @@ def update_redis_cache(redis_instance):
                     time.sleep(1) 
                     continue
                 
+                # 1. Fetch 5-min OHLC for short-term changes/graphing (24h worth)
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
@@ -297,8 +314,9 @@ def update_redis_cache(redis_instance):
                 if ohlc_5min_data:
                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}' 
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
-                    logger.debug(f"   >>> OHLC 5-min sparad för {ticker}")
+                    logger.debug(f"    >>> OHLC 5-min sparad för {ticker}")
                     
+                # 2. Fetch 1-day OHLC for long-term changes (30d worth)
                 periods_ago_30d = 2592000 
                 ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
                 long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
@@ -312,15 +330,16 @@ def update_redis_cache(redis_instance):
             new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
             
             if redis_instance:
+                # Save data again, now including the calculated percentage changes
                 redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
                 logger.debug("✅ Hela 'crypto_data' inkl procentrörelser sparad.")
             
             cycle_duration = time.time() - cycle_start_time
             time_to_sleep = UPDATE_CYCLE_SECONDS - cycle_duration
             if time_to_sleep > 0:
-                 time.sleep(time_to_sleep)
+                    time.sleep(time_to_sleep)
             else:
-                 logger.warning(f"Cykeln tog lång tid: {cycle_duration:.2f}s")
+                    logger.warning(f"Cykeln tog lång tid: {cycle_duration:.2f}s")
 
         except Exception as e:
             logger.error(f"❌ Fel i bakgrundstråd: {e}")
@@ -397,6 +416,7 @@ def update_all_live_data(n, coin_symbol, currency):
         price_text = f"❌ Pris för {coin_symbol}/{currency} saknas."
         updated_text = "Data saknas."
     else:
+        # Format the price with SEK/EUR separators
         price_format = f"{current_price_display_currency:,.4f}" if current_price_display_currency < 10 else f"{current_price_display_currency:,.2f}"
         price_format = price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ") 
         price_text = html.Span(f"{coin_label}: {price_format} {currency}", style={'color': '#0056b3' if current_price_eur else '#dc3545'})

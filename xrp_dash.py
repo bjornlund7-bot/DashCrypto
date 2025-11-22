@@ -68,6 +68,9 @@ TIME_WINDOWS = {
     '30d': {'blocks': 30, 'interval': 1440}, 
 }
 
+# Definiera listan för prisrörelser, baserat på TIME_WINDOWS keys
+PRICE_CHANGE_PERIODS = list(TIME_WINDOWS.keys())
+
 TREND_WINDOWS = {
     '1h': {'blocks': 12, 'color': '#ff7f0e', 'name': 'Trend (1h)'}, 
     '3h': {'blocks': 36, 'color': '#2ca02c', 'name': 'Trend (3h)'}, 
@@ -248,33 +251,29 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
 
     for period, config in periods.items():
         blocks = config['blocks']
+        interval = config['interval']
         
-        is_daily_data = any(config['interval'] == 1440 for _, config in periods.items() if period in periods)
-        
-        if is_daily_data and period in ['7d', '30d']:
-             blocks_needed = config['blocks']
-             
-        elif not is_daily_data and period not in ['7d', '30d']:
-             blocks_needed = config['blocks']
-        else:
-            changes[period] = None
-            continue
-
-        if len(ohlc_data) >= blocks_needed:
-            # Hämta referenspriset (N block bakåt).
-            if blocks_needed > len(ohlc_data):
-                changes[period] = None
-                continue
-
-            reference_price = ohlc_data[-blocks_needed]['price']
+        # Vi använder 5-minuters data för kortare perioder och 1-dag data (1440 min) för längre
+        if (interval == OHLC_CACHE_INTERVAL_MIN and period in ['30m', '1h', '3h', '6h', '24h']) or \
+           (interval == 1440 and period in ['7d', '30d']):
             
-            if reference_price and reference_price > 0:
-                change = ((current_price - reference_price) / reference_price) * 100
-                changes[period] = change
+            blocks_needed = blocks
+            
+            # Kontrollera att vi har tillräckligt med historisk data för den önskade perioden
+            if len(ohlc_data) >= blocks_needed:
+                # Hämta referenspriset (N block bakåt).
+                reference_price = ohlc_data[-blocks_needed]['price']
+                
+                if reference_price is not None and reference_price > 0:
+                    change = ((current_price - reference_price) / reference_price) * 100
+                    changes[period] = change
+                else:
+                    changes[period] = None 
             else:
                 changes[period] = None 
         else:
-            changes[period] = None 
+            changes[period] = None # Bör inte hända om anropet är korrekt
+            
     return changes
 
 
@@ -352,7 +351,7 @@ def background_data_fetch(redis_instance):
                 long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
                 long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
                 
-                percent_changes.update(long_term_changes)
+                percent_changes.update(long_term_changes) # Lägg till 7d/30d i resultatet
                 all_percent_changes[coin_symbol] = percent_changes
                 
                 time.sleep(0.1) # Undvik rate-limit från Kraken
@@ -399,6 +398,26 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     high_display = range_data.get('high_eur') * eur_rate if currency == 'SEK' and range_data.get('high_eur') is not None else range_data.get('high_eur')
     low_display = range_data.get('low_eur') * eur_rate if currency == 'SEK' and range_data.get('low_eur') is not None else range_data.get('low_eur')
 
+    # Dela upp tidsramarna för att göra tabellen mer kompakt
+    periods_col1 = ['30m', '1h', '3h', '6h']
+    periods_col2 = ['24h', '7d', '30d']
+    
+    # Skapa tabellrader för kolumn 1
+    table_rows_col1 = [
+        html.Tr([
+            html.Td(f"{p}:", style={'width': '50%', 'borderRight': '1px dotted #ccc'}),
+            html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
+        ]) for p in periods_col1
+    ]
+    
+    # Skapa tabellrader för kolumn 2
+    table_rows_col2 = [
+        html.Tr([
+            html.Td(f"{p}:", style={'width': '50%'}),
+            html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
+        ]) for p in periods_col2
+    ]
+
     return html.Div(
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
@@ -407,25 +426,30 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
             html.Div(
                 style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'flexWrap': 'wrap'},
                 children=[
+                    # Pris
                     html.Div(style={'minWidth': '180px'}, children=[
                         html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.P(price_text, style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
                     ]),
                     
+                    # 24h Intervall
                     html.Div(style={'minWidth': '150px'}, children=[
                         html.P("24h Intervall", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.Small(f"Hög: {format_price_display(high_display)} {currency}", style={'color': 'green', 'display': 'block'}),
                         html.Small(f"Låg: {format_price_display(low_display)} {currency}", style={'color': 'red', 'display': 'block'}),
                     ]),
                     
+                    # Prisrörelser (%) (Uppdelad i två kolumner för sju rader)
                     html.Div(style={'minWidth': '200px'}, children=[
                         html.P("Prisrörelser (%)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.Table(style={'width': '100%', 'fontSize': '0.9em'}, children=[
-                            html.Tbody([
-                                html.Tr([
-                                    html.Td(f"{p}:", style={'width': '33%'}),
-                                    html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
-                                ]) for p in ['1h', '3h', '24h']
+                        html.Div(style={'display': 'flex', 'gap': '10px'}, children=[
+                            # Kolumn 1
+                            html.Table(style={'width': '50%', 'fontSize': '0.9em'}, children=[
+                                html.Tbody(table_rows_col1)
+                            ]),
+                            # Kolumn 2
+                            html.Table(style={'width': '50%', 'fontSize': '0.9em'}, children=[
+                                html.Tbody(table_rows_col2)
                             ])
                         ])
                     ])
@@ -589,7 +613,9 @@ def update_all_live_data(n, coin_symbol, currency):
     all_24h_range = data.get('ALL_24H_RANGE', {})
     summary_cards = []
     card_style = {'flex': '0 1 calc(25% - 15px)', 'minWidth': '200px', 'padding': '15px', 'border': '1px solid #e0e0e0', 'borderRadius': '8px', 'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)', 'transition': 'transform 0.2s ease', 'cursor': 'pointer', 'boxSizing': 'border-box'}
-    periods_to_show = ['30m', '1h', '24h', '7d', '30d'] 
+    
+    # Använd den globalt definierade listan
+    periods_to_show = PRICE_CHANGE_PERIODS
     
     for label in COINS_LABELS:
         coin_symbol_loop = label.split(' ')[0]

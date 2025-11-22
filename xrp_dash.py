@@ -61,6 +61,9 @@ CRYPTO_EMOJIS = {
 }
 
 DEFAULT_PAIR_KEY = 'XRP (Ripple)' 
+# Huvudfix: Se till att startvalutan är det faktiska symbolvärdet ('XRP')
+DEFAULT_COIN_SYMBOL = DEFAULT_PAIR_KEY.split(' ')[0] 
+
 COINS_LABELS = list(CRYPTO_PAIRS.keys())
 COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
 SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
@@ -89,9 +92,7 @@ TREND_WINDOWS = {
 DEFAULT_TRENDS = list(TREND_WINDOWS.keys()) 
 
 # --- NY KONSTANT FÖR LARM TRIGGERS ---
-# Uppgångar sorteras fallande (50, 40, 30...) för att kolla det högsta först
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
-# Nedgångar sorteras stigande (-75, -50, -30...) för att kolla det lägsta (mest negativa) först
 ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75]) 
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 4 * 3600 # 4 timmar
@@ -117,8 +118,7 @@ DEFAULT_DATA = {
     'ALL_PERCENT_CHANGE': {},
 }
 
-# --- Hjälpfunktioner ---
-
+# --- Hjälpfunktioner (oförändrade) ---
 def format_price_display(p):
     """Formaterar priset med rätt decimaler."""
     if p is None: return "N/A"
@@ -267,7 +267,7 @@ def format_change(c):
     symbol = '▲' if c > 0 else '▼'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold', 'fontSize': '0.85em'})
 
-# --- NY LARM FUNKTIONER ---
+# --- LARM FUNKTIONER (oförändrade) ---
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("Telegram-tokens är inte konfigurerade. Meddelande skickas ej.")
@@ -350,7 +350,7 @@ def check_and_send_alerts(all_percent_changes, r_instance):
                         logger.info(f"Telegram Alert skickad: {coin_symbol} LÄGST {lowest_threshold_met}% på {period}")
 
 
-# --- Bakgrundsjobb ---
+# --- Bakgrundsjobb (oförändrad) ---
 
 def background_data_fetch(redis_instance):
     """Hämtar Ticker och OHLC data, beräknar förändringar och cachar till Redis. KÖR ÄVEN ALERTER."""
@@ -391,7 +391,7 @@ def background_data_fetch(redis_instance):
                         min_ohlc = min(prices_eur)
                         all_24h_range_ohlc[coin_symbol] = {'high_eur': max_ohlc, 'low_eur': min_ohlc}
                     
-                    if coin_symbol == DEFAULT_PAIR_KEY.split(' ')[0]:
+                    if coin_symbol == DEFAULT_COIN_SYMBOL: # Använder den nya konstanten här
                          ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
                          redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                          
@@ -445,17 +445,20 @@ if r:
 app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
 
-# Resten av Dash-komponenterna är oförändrade (inklusive create_selected_coin_box och create_summary_row)
-# ... (HTML-layout och Callbacks för Dashboarden är oförändrade)
 def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur, low_eur, percent_data):
+    # (HTML-genereringslogik oförändrad)
     price_text = f"{format_price_display(price)} {currency}"
     coin_emoji = CRYPTO_EMOJIS.get(symbol, '')
+    
     change_24h = percent_data.get('24h')
     price_color = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
+    
     high_display = high_eur * eur_rate if currency == 'SEK' and high_eur is not None else high_eur
     low_display = low_eur * eur_rate if currency == 'SEK' and low_eur is not None else low_eur
+
     periods_col1 = ['30m', '1h', '3h'] 
     periods_col2 = ['6h', '24h', '7d', '30d'] 
+
     def create_change_display(period):
         return html.Div(
             style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
@@ -464,6 +467,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
                 format_change(percent_data.get(period))
             ]
         )
+    
     col1 = html.Div(
         style={'flex': '1 1 30%', 'minWidth': '220px', 'paddingRight': '15px', 'borderRight': '1px solid #dee2e6'},
         children=[
@@ -477,6 +481,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             ]),
         ]
     )
+
     col2 = html.Div(
         style={'flex': '1 1 20%', 'minWidth': '150px', 'padding': '0 15px', 'borderRight': '1px solid #dee2e6'},
         children=[
@@ -493,6 +498,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             ])
         ]
     )
+
     col3 = html.Div(
         style={'flex': '1 1 45%', 'minWidth': '250px', 'paddingLeft': '15px'},
         children=[
@@ -512,6 +518,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             )
         ]
     )
+
     return html.Div(
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
@@ -522,11 +529,16 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             )
         ]
     )
+
 def create_summary_row(coin_symbol, label, current_price, percent_data, currency, is_selected, eur_to_sek):
+    # (HTML-genereringslogik oförändrad)
     coin_emoji = CRYPTO_EMOJIS.get(coin_symbol, '')
+    
     row_bg_color = '#f0f8ff' if is_selected else 'white'
     price_display = current_price * eur_to_sek if currency == 'SEK' and current_price is not None else current_price
+    
     col_style = {'flex': '1 1 10%', 'textAlign': 'right', 'whiteSpace': 'nowrap', 'padding': '0 5px', 'fontSize': '0.8em'}
+
     row_columns = [
         html.Div(
             style={'flex': '0 0 160px', 'textAlign': 'left', 'fontWeight': 'bold', 'color': '#0056b3', 'paddingLeft': '5px', 'whiteSpace': 'nowrap'},
@@ -543,6 +555,7 @@ def create_summary_row(coin_symbol, label, current_price, percent_data, currency
         html.Div(format_change(percent_data.get('7d')), style=col_style),
         html.Div(format_change(percent_data.get('30d')), style=col_style),
     ]
+
     return html.Div(
         id={'type': 'summary-card', 'index': coin_symbol},
         n_clicks=0,
@@ -559,29 +572,46 @@ def create_summary_row(coin_symbol, label, current_price, percent_data, currency
         },
         children=row_columns
     )
+
+
 app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
     html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
+        
         html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
+        
+        # --- TOPPSEKTION: Kontroller och Huvudbox (som en enda flex-rad) ---
         html.Div(style={'display': 'flex', 'gap': '20px', 'marginBottom': '20px', 'flexWrap': 'wrap'}, children=[
+            
+            # Kontroller (Dropdowns) - Fast bredd
             html.Div(style={'flex': '0 0 200px', 'minWidth': '200px'}, children=[
                 html.H3('⚙️ Kontroller', style={'fontSize': '1.3em', 'color': '#495057', 'marginBottom': '15px'}),
                 html.Div(style={'marginBottom': '20px'}, children=[
                     html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
-                    dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_PAIR_KEY.split(' ')[0], clearable=False),
+                    # Använder den nya konstanten DEFAULT_COIN_SYMBOL
+                    dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_COIN_SYMBOL, clearable=False),
                 ]),
                 html.Div(children=[
                     html.Label("Välj fiatvaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
                     dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in CURRENCIES], value='EUR', clearable=False),
                 ]),
             ]),
+            
+            # Prissammanfattningsboxen - Flexibel bredd
             html.Div(style={'flex': '1 1 600px', 'minWidth': '600px'}, children=[
                 html.Div(id='current-price-summary-box-container'),
                 html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '0px'}),
             ]),
+            
+            # Dolda Store komponenter
             dcc.Store(id='chart-data-store'), 
             dcc.Store(id='current-currency-store'),
+            # Dold store för att behålla det initiala/valda värdet för coin-dropdown
+            dcc.Store(id='initial-coin-symbol-store', data=DEFAULT_COIN_SYMBOL),
         ]),
+        
+        # --- GRAF SEKTION (FULL BREDD) ---
         html.Div(style={'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
+            # Kontroller för trendlinjer
             html.Div(style={'textAlign': 'center', 'marginBottom': '10px'}, children=[
                  html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px', 'fontSize': '0.9em'}),
                  dcc.Checklist(
@@ -594,10 +624,14 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             ]),
             dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
         ]),
+        
+        # --- SAMMANFATTNINGSLISTA SEKTION (FULL BREDD) ---
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
              html.H3('📊 Sammanfattning: Prisrörelser', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
              dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
         ]),
+        
+        # --- Telegram Alert Status (FÖR ATT VISA ATT SYSTEMET KÖR) ---
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
             html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås under 30m, 1h, 3h, 6h, 12h eller 24h:', style={'margin': '0 0 10px 0'}),
@@ -617,6 +651,8 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
 ])
 
+# --- Callbacks ---
+
 # Huvud-Callback: Uppdaterar all live data 
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
@@ -624,6 +660,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     Output('chart-data-store', 'data'), 
     Output('current-currency-store', 'data'), 
     Output('crypto-summary', 'children'),
+    
     [Input('interval-component', 'n_intervals'), 
      Input('coin-dropdown', 'value'), 
      Input('currency-dropdown', 'value')]
@@ -638,6 +675,7 @@ def update_all_live_data(n, coin_symbol, currency):
         return loading_box, loading_time, None, currency, loading_summary
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
+    # Observera: coin_symbol kommer från dropdownen och är det korrekta värdet
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
     price_key = f'{coin_symbol}/{currency}'
     current_price_display_currency = data.get(price_key)
@@ -651,6 +689,7 @@ def update_all_live_data(n, coin_symbol, currency):
     all_24h_range_ohlc = data.get('ALL_24H_RANGE_OHLC', {})
     selected_coin_24h_range = all_24h_range_ohlc.get(coin_symbol, {})
     
+    # --- Förbered OHLC data för grafen och Store ---
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
@@ -674,6 +713,7 @@ def update_all_live_data(n, coin_symbol, currency):
             'coin_symbol': coin_symbol
         }
     
+    # 1. GENERERA SAMMANFATTNINGSBOXEN
     if current_price_display_currency is not None:
         summary_box = create_selected_coin_box(
             coin_label, coin_symbol, 
@@ -686,6 +726,7 @@ def update_all_live_data(n, coin_symbol, currency):
     else:
         summary_box = create_selected_coin_box(coin_label, coin_symbol, 0.0, currency, eur_to_sek, None, None, percent_data)
         
+    # 2. GENERERA SAMMANFATTNINGS-LISTA/TABELL (med sortering)
     summary_data = []
     for label in COINS_LABELS:
         coin_symbol_loop = label.split(' ')[0]
@@ -728,7 +769,8 @@ def update_all_live_data(n, coin_symbol, currency):
     summary_rows = []
     
     for item in summary_data:
-        is_selected = item['symbol'] == coin_symbol
+        # Markera raden som matchar det *valda* värdet från dropdownen
+        is_selected = item['symbol'] == coin_symbol 
         summary_row = create_summary_row(
             coin_symbol=item['symbol'],
             label=item['label'],
@@ -749,7 +791,7 @@ def update_all_live_data(n, coin_symbol, currency):
 @app.callback(
     Output('live-update-graph', 'figure'),
     [Input('chart-data-store', 'data'), Input('current-currency-store', 'data'), Input('trendline-checkboxes', 'value')],
-    [State('coin-dropdown', 'value')]
+    [State('coin-dropdown', 'value')] # Grafen använder alltid det valda värdet i dropdownen
 )
 def update_trendline_visibility(chart_data_store, currency, selected_trends, coin_symbol):
     if chart_data_store is None:
@@ -800,29 +842,39 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
 
     return figure
 
-# Callback för att uppdatera Dropdown när man klickar på en rad (oförändrad)
+# Callback för att uppdatera Dropdown när man klickar på en rad (Liten justering för att hantera initialt läge)
 @app.callback(
     Output('coin-dropdown', 'value'),
     [Input({'type': 'summary-card', 'index': dash.dependencies.ALL}, 'n_clicks')],
-    [State({'type': 'summary-card', 'index': dash.dependencies.ALL}, 'id')],
+    [State({'type': 'summary-card', 'index': dash.dependencies.ALL}, 'id'),
+     State('coin-dropdown', 'value')], # Läs in det aktuella värdet
     prevent_initial_call=True
 )
-def update_dropdown_on_card_click(n_clicks, ids):
+def update_dropdown_on_card_click(n_clicks, ids, current_dropdown_value):
     ctx = dash.callback_context
     if not ctx.triggered:
+        # Detta bör inte hända med prevent_initial_call=True, men är en säkerhetsåtgärd.
         raise dash.exceptions.PreventUpdate
 
-    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    triggered_input = ctx.triggered[0]
+    triggered_prop_id = triggered_input['prop_id'].split('.')[0]
     
-    if '"type":"summary-card"' not in triggered_id:
-        raise dash.exceptions.PreventUpdate
-        
-    try:
-        triggered_id_dict = json.loads(triggered_id)
-        coin_symbol = triggered_id_dict['index']
-        return coin_symbol
-    except (json.JSONDecodeError, KeyError):
-        raise dash.exceptions.PreventUpdate
+    # Kontrollera om det var ett faktiskt klick på en summary-card
+    if triggered_input['value'] > 0 and '"type":"summary-card"' in triggered_prop_id:
+        try:
+            triggered_id_dict = json.loads(triggered_prop_id)
+            coin_symbol = triggered_id_dict['index']
+            # Återställ n_clicks för den klickade raden för att tillåta framtida klick
+            # (Detta kan bara göras i en separat Output, men vi kan bara returnera det nya värdet här)
+            return coin_symbol
+        except (json.JSONDecodeError, KeyError):
+            logger.error(f"Fel vid parsning av klick-ID: {triggered_prop_id}")
+            raise dash.exceptions.PreventUpdate
+    
+    # Om det inte var ett klick, eller om det var den initiala utlösningen av en lista av n_clicks=0, avbryt
+    # (Denna logik är nu starkare tack vare prevent_initial_call=True och koll på value > 0)
+    raise dash.exceptions.PreventUpdate
+
 
 if __name__ == '__main__':
     app.run_server(debug=True)

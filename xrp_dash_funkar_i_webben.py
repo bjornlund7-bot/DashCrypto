@@ -128,12 +128,15 @@ def send_telegram_alert(coin_label, price, currency, threshold):
         logger.error("Kan inte skicka Telegram-meddelande: Bot Token eller Chat ID saknas.")
         return False
         
+    # Använder time.gmtime och lägger till 3600s för att få CEST/CET
+    local_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() + 3600))
+
     message = (
         f"🚨 Krypto Alert: Prisgräns nådd! 🚨\n\n"
         f"Valuta: {coin_label}\n"
         f"Gränsvärde: {threshold:,.4f} {currency}\n"
         f"Nuvarande pris: {price:,.4f} {currency}\n"
-        f"Tid: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} Lokal Tid"
+        f"Tid: {local_time_str} Lokal Tid"
     )
 
     telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -390,7 +393,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     # Anropa den globala prisformateringsfunktionen
     price_text = f"{format_price_display(price)} {currency}"
     
-    # Prisfärg baserat på 24h-förändring
+    # Prisfärg baserat på 24h-förändring (Används för huvudpris)
     change_24h = percent_data.get('24h')
     price_color = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
     
@@ -398,61 +401,64 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     high_display = range_data.get('high_eur') * eur_rate if currency == 'SEK' and range_data.get('high_eur') is not None else range_data.get('high_eur')
     low_display = range_data.get('low_eur') * eur_rate if currency == 'SEK' and range_data.get('low_eur') is not None else range_data.get('low_eur')
 
-    # Dela upp tidsramarna för att göra tabellen mer kompakt
-    periods_col1 = ['30m', '1h', '3h', '6h']
-    periods_col2 = ['24h', '7d', '30d']
-    
-    # Skapa tabellrader för kolumn 1
-    table_rows_col1 = [
-        html.Tr([
-            html.Td(f"{p}:", style={'width': '50%', 'borderRight': '1px dotted #ccc'}),
-            html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
-        ]) for p in periods_col1
-    ]
-    
-    # Skapa tabellrader för kolumn 2
-    table_rows_col2 = [
-        html.Tr([
-            html.Td(f"{p}:", style={'width': '50%'}),
-            html.Td(format_change(percent_data.get(p)), style={'textAlign': 'right'})
-        ]) for p in periods_col2
-    ]
+    # Skapa listan med prisrörelser (återanvänder format_change)
+    # Dela upp i två kolumner för att få en kompakt rad längst ner.
+    periods_col1 = PRICE_CHANGE_PERIODS[:4] # 30m, 1h, 3h, 6h
+    periods_col2 = PRICE_CHANGE_PERIODS[4:] # 24h, 7d, 30d
+
+    def create_change_display(period):
+        return html.Div(
+            style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '5px 0', 'padding': '0 5px'},
+            children=[
+                html.Span(f"{period}:", style={'color': '#6c757d', 'fontWeight': 'normal'}),
+                format_change(percent_data.get(period))
+            ]
+        )
 
     return html.Div(
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
         children=[
+            # TOPP: Rubrik och huvudinfo
             html.H2(f"{label} ({symbol})", style={'fontSize': '1.8em', 'color': '#0056b3', 'marginBottom': '10px'}),
             html.Div(
-                style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'flexWrap': 'wrap'},
+                style={'display': 'flex', 'justifyContent': 'space-around', 'alignItems': 'center', 'flexWrap': 'wrap', 'borderBottom': '1px solid #dee2e6', 'paddingBottom': '15px', 'marginBottom': '15px'},
                 children=[
-                    # Pris
-                    html.Div(style={'minWidth': '180px'}, children=[
+                    # 1. Nuvarande Pris
+                    html.Div(style={'minWidth': '180px', 'textAlign': 'center'}, children=[
                         html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.P(price_text, style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
+                        html.P(price_text, id='current-price-display', style={'fontSize': '3.0em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
                     ]),
                     
-                    # 24h Intervall
-                    html.Div(style={'minWidth': '150px'}, children=[
+                    # 2. 24h Intervall
+                    html.Div(style={'minWidth': '150px', 'textAlign': 'center', 'padding': '0 10px'}, children=[
                         html.P("24h Intervall", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.Small(f"Hög: {format_price_display(high_display)} {currency}", style={'color': 'green', 'display': 'block'}),
                         html.Small(f"Låg: {format_price_display(low_display)} {currency}", style={'color': 'red', 'display': 'block'}),
                     ]),
-                    
-                    # Prisrörelser (%) (Uppdelad i två kolumner för sju rader)
-                    html.Div(style={'minWidth': '200px'}, children=[
-                        html.P("Prisrörelser (%)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
-                        html.Div(style={'display': 'flex', 'gap': '10px'}, children=[
-                            # Kolumn 1
-                            html.Table(style={'width': '50%', 'fontSize': '0.9em'}, children=[
-                                html.Tbody(table_rows_col1)
-                            ]),
-                            # Kolumn 2
-                            html.Table(style={'width': '50%', 'fontSize': '0.9em'}, children=[
-                                html.Tbody(table_rows_col2)
-                            ])
-                        ])
-                    ])
+                ]
+            ),
+            
+            # BOTTEN: Prisrörelser (Ny rad med alla perioder)
+            html.Div(
+                style={'borderTop': '1px solid #dee2e6', 'paddingTop': '15px'},
+                children=[
+                    html.P("Prisrörelser (%)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center'}),
+                    html.Div(
+                        style={'display': 'flex', 'justifyContent': 'space-around', 'gap': '10px', 'flexWrap': 'wrap'},
+                        children=[
+                            # Vänster kolumn (Kortare perioder)
+                            html.Div(
+                                style={'flex': '1 1 45%', 'minWidth': '150px', 'borderRight': '1px dotted #ccc', 'paddingRight': '10px'},
+                                children=[create_change_display(p) for p in periods_col1]
+                            ),
+                            # Höger kolumn (Längre perioder)
+                            html.Div(
+                                style={'flex': '1 1 45%', 'minWidth': '150px', 'paddingLeft': '10px'},
+                                children=[create_change_display(p) for p in periods_col2]
+                            ),
+                        ]
+                    )
                 ]
             )
         ]
@@ -529,8 +535,11 @@ def update_all_live_data(n, coin_symbol, currency):
     timestamp = data.get('timestamp')
     current_price_eur = data.get(f'{coin_symbol}/EUR') 
     
+    # KORRIGERING: Lägg till 3600 sekunder för att kompensera för UTC/CET skillnaden
+    local_timestamp = timestamp + 3600 
+    
     # --- UPPDATERINGSTEXT ---
-    updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.localtime(timestamp))} Lokal tid (CET/CEST)"
+    updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
     
     # Hämta 24h intervall och %-förändring för den valda valutan
     range_data_raw = data.get('ALL_24H_RANGE', {}).get(coin_symbol, {})
@@ -578,8 +587,9 @@ def update_all_live_data(n, coin_symbol, currency):
         prices_display.append(current_price_display_currency)
         
         # Lägg till nuvarande tidpunkt till tidsaxeln (behövs för att matcha sista priset)
-        times = [time.strftime('%H:%M', time.localtime(item['time'])) for item in historical_data]
-        times.append(time.strftime('%H:%M', time.localtime(timestamp)))
+        # KORRIGERING: Lägg till 3600 sekunder (1 timme) för varje tidsstämpel i diagrammet
+        times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in historical_data]
+        times.append(time.strftime('%H:%M', time.gmtime(local_timestamp)))
         
         figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
         
@@ -595,7 +605,8 @@ def update_all_live_data(n, coin_symbol, currency):
                 trend_y_display = trend_y_eur * eur_to_sek if currency == 'SEK' else trend_y_eur
                 trend_times = times[start_index:start_index + blocks]
                 
-                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash'), hoverinfo='x+y'))
+                # KORRIGERING: Ändra line.dash till 'dot'
+                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dot'), hoverinfo='x+y'))
 
         # 24h Högsta/Lägsta linjer (använder den globala format_price_display)
         if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"24h Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
@@ -614,7 +625,6 @@ def update_all_live_data(n, coin_symbol, currency):
     summary_cards = []
     card_style = {'flex': '0 1 calc(25% - 15px)', 'minWidth': '200px', 'padding': '15px', 'border': '1px solid #e0e0e0', 'borderRadius': '8px', 'backgroundColor': '#ffffff', 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)', 'transition': 'transform 0.2s ease', 'cursor': 'pointer', 'boxSizing': 'border-box'}
     
-    # Använd den globalt definierade listan
     periods_to_show = PRICE_CHANGE_PERIODS
     
     for label in COINS_LABELS:
@@ -687,6 +697,8 @@ def update_all_live_data(n, coin_symbol, currency):
         summary_cards.append(card)
 
     return summary_box, updated_text, figure, summary_cards
+
+# (Den gamla Slider-callbacken är borttagen, den nya logiken är inbäddad i create_selected_coin_box)
 
 # Callback för att uppdatera Dropdown när man klickar på ett summary-kort
 @app.callback(

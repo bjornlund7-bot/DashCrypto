@@ -93,7 +93,7 @@ DEFAULT_DATA = {
     'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
     'timestamp': time.time(),
     'EUR_SEK_RATE': 11.0, 
-    'ALL_24H_RANGE': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}},
+    'ALL_24H_RANGE': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}}, # Detta är Ticker API:s 24h data
     'ALL_PERCENT_CHANGE': {},
 }
 
@@ -200,6 +200,7 @@ def fetch_crypto_data():
                 current_data[f'{coin_symbol}/EUR'] = price_eur
                 current_data[f'{coin_symbol}/SEK'] = price_eur * sek_rate
                 
+                # Behåller Ticker 24h data för display i sammanfattningsboxen
                 current_data['ALL_24H_RANGE'][coin_symbol] = {
                     'high_eur': high_24h_eur,
                     'low_eur': low_24h_eur
@@ -319,7 +320,7 @@ def background_data_fetch(redis_instance):
         try:
             logger.debug("--- Bakgrundstråd: Startar uppdateringscykel ---")
             
-            # 1. Hämta realtidsdata och 24h intervall
+            # 1. Hämta realtidsdata och 24h intervall (Ticker)
             new_data = fetch_crypto_data()
             if not new_data or new_data == DEFAULT_DATA:
                 logger.warning("Misslyckades med att hämta aktuell tickerdata. Försöker igen senare.")
@@ -388,7 +389,7 @@ app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/pen
 server = app.server 
 
 def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_data, percent_data):
-    """Genererar den större sammanställningsboxen för den valda valutan."""
+    """Genererar den större sammanställningsboxen för den valda valutan. (Ticker data)"""
     
     # Anropa den globala prisformateringsfunktionen
     price_text = f"{format_price_display(price)} {currency}"
@@ -397,12 +398,11 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
     change_24h = percent_data.get('24h')
     price_color = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
     
-    # Konvertera 24h högsta/lägsta till displayvaluta
+    # Konvertera 24h högsta/lägsta (Ticker data) till displayvaluta
     high_display = range_data.get('high_eur') * eur_rate if currency == 'SEK' and range_data.get('high_eur') is not None else range_data.get('high_eur')
     low_display = range_data.get('low_eur') * eur_rate if currency == 'SEK' and range_data.get('low_eur') is not None else range_data.get('low_eur')
 
-    # Skapa listan med prisrörelser (återanvänder format_change)
-    # Dela upp i två kolumner för att få en kompakt rad längst ner.
+    # Skapa listan med prisrörelser
     periods_col1 = PRICE_CHANGE_PERIODS[:4] # 30m, 1h, 3h, 6h
     periods_col2 = PRICE_CHANGE_PERIODS[4:] # 24h, 7d, 30d
 
@@ -430,16 +430,16 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, range_dat
                         html.P(price_text, id='current-price-display', style={'fontSize': '3.0em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
                     ]),
                     
-                    # 2. 24h Intervall
+                    # 2. 24h Intervall (från Ticker API)
                     html.Div(style={'minWidth': '150px', 'textAlign': 'center', 'padding': '0 10px'}, children=[
-                        html.P("24h Intervall", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
+                        html.P("24h Intervall (Ticker)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.Small(f"Hög: {format_price_display(high_display)} {currency}", style={'color': 'green', 'display': 'block'}),
                         html.Small(f"Låg: {format_price_display(low_display)} {currency}", style={'color': 'red', 'display': 'block'}),
                     ]),
                 ]
             ),
             
-            # BOTTEN: Prisrörelser (Ny rad med alla perioder)
+            # BOTTEN: Prisrörelser
             html.Div(
                 style={'borderTop': '1px solid #dee2e6', 'paddingTop': '15px'},
                 children=[
@@ -480,10 +480,25 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             ]),
         ]),
         
-        # NYA SAMMANFATTNINGSBOXEN (Din önskade "box")
+        # NYA SAMMANFATTNINGSBOXEN
         html.Div(id='current-price-summary-box-container'),
         
-        html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '40px'}),
+        html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '20px'}),
+        
+        # Kontroller för trendlinjer
+        html.Div(style={'textAlign': 'center', 'marginBottom': '10px', 'padding': '10px 0', 'borderBottom': '1px solid #eee'}, children=[
+             html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px'}),
+             dcc.Checklist(
+                 id='trendline-checkboxes',
+                 options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items()],
+                 value=['1h', '3h'], # Standardval: Visa 1h och 3h trendlinjerna
+                 inline=True,
+                 style={'display': 'inline-block'}
+             ),
+             # Dold lagring för diagramdata
+             dcc.Store(id='chart-data-store'), 
+             dcc.Store(id='current-currency-store'),
+        ]),
         
         dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
         
@@ -512,7 +527,8 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
     Output('last-updated', 'children'),
-    Output('live-update-graph', 'figure'),
+    Output('chart-data-store', 'data'), # Sparar rådata för grafen i store
+    Output('current-currency-store', 'data'), # Sparar valuta
     Output('crypto-summary', 'children'),
     [Input('interval-component', 'n_intervals'), Input('coin-dropdown', 'value'), Input('currency-dropdown', 'value')]
 )
@@ -521,12 +537,10 @@ def update_all_live_data(n, coin_symbol, currency):
     
     # Hantera Fallback / Laddning
     if data is None or 'EUR_SEK_RATE' not in data:
-        loading_text = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, {}, {})
+        loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, {}, {})
         loading_time = "Väntar på data från Kraken/Redis..."
-        figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar...'], textfont=dict(size=20, color="#0056b3")))
-        figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
         loading_summary = html.Div("Laddar kryptoöversikt...", style={'textAlign': 'center', 'width': '100%', 'color': '#6c757d', 'padding': '20px'})
-        return loading_text, loading_time, figure, loading_summary
+        return loading_box, loading_time, None, currency, loading_summary
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
@@ -535,91 +549,57 @@ def update_all_live_data(n, coin_symbol, currency):
     timestamp = data.get('timestamp')
     current_price_eur = data.get(f'{coin_symbol}/EUR') 
     
-    # KORRIGERING: Lägg till 3600 sekunder för att kompensera för UTC/CET skillnaden
-    local_timestamp = timestamp + 3600 
-    
-    # --- UPPDATERINGSTEXT ---
+    local_timestamp = timestamp + 3600 # CET/CEST korrigering
     updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
     
-    # Hämta 24h intervall och %-förändring för den valda valutan
+    # Hämta Ticker 24h intervall (för sammanfattningsboxen) och %-förändring
     range_data_raw = data.get('ALL_24H_RANGE', {}).get(coin_symbol, {})
     percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol, {})
     
-    # 1. GENERERA SAMMANFATTNINGSBOXEN (Din önskade "box")
+    # 1. GENERERA SAMMANFATTNINGSBOXEN
     if current_price_display_currency is not None:
         summary_box = create_selected_coin_box(
             coin_label, coin_symbol, 
             current_price_display_currency, currency, 
             eur_to_sek, 
-            range_data_raw, 
+            range_data_raw, # Ticker 24h data
             percent_data
         )
     else:
-        # Fallback om priset för vald krypto saknas
         summary_box = create_selected_coin_box(coin_label, coin_symbol, 0.0, currency, eur_to_sek, range_data_raw, percent_data)
     
-    # --- GRAF RITNING ---
+    # --- Förbered OHLC data för grafen och Store ---
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
     
     historical_data_json = r.get(ohlc_cache_key) if r else None
     historical_data = json.loads(historical_data_json) if historical_data_json else []
-        
-    range_data_raw = data.get('ALL_24H_RANGE', {}).get(coin_symbol, {})
-    high_24h_eur = range_data_raw.get('high_eur')
-    low_24h_eur = range_data_raw.get('low_eur')
     
-    figure = go.Figure()
-    
+    # Förbered OHLC-data för lagring i Store
     if historical_data and current_price_eur is not None:
+        
+        # Lägg till aktuell Close Price i slutet av historiken för komplett 24h bild
+        historical_data.append({'time': timestamp, 'price': current_price_eur})
+        
+        # Beräkna High/Low baserat på den HÄMTADE historiken för diagrammet
         prices_eur = [item['price'] for item in historical_data]
-        if currency == 'SEK':
-            prices_display = [p * eur_to_sek for p in prices_eur]
-            high_24h_display = high_24h_eur * eur_to_sek if high_24h_eur is not None else None
-            low_24h_display = low_24h_eur * eur_to_sek if low_24h_eur is not None else None
-        else: 
-            prices_display = prices_eur
-            high_24h_display = high_24h_eur
-            low_24h_display = low_24h_eur
+        max_ohlc = max(prices_eur) if prices_eur else None
+        min_ohlc = min(prices_eur) if prices_eur else None
         
-        # Inkludera den senaste prisuppdateringen i slutet av grafen
-        prices_display.append(current_price_display_currency)
-        
-        # Lägg till nuvarande tidpunkt till tidsaxeln (behövs för att matcha sista priset)
-        # KORRIGERING: Lägg till 3600 sekunder (1 timme) för varje tidsstämpel i diagrammet
-        times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in historical_data]
-        times.append(time.strftime('%H:%M', time.gmtime(local_timestamp)))
-        
-        figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
-        
-        # Trendlinjer
-        for trend_key, config in TREND_WINDOWS.items():
-            if trend_key not in ['1h', '3h', '6h']: continue 
-
-            blocks = config['blocks']
-            slope, intercept, start_index = calculate_trendline(historical_data, blocks)
-            if slope is not None and start_index is not None:
-                trend_x_indices = np.arange(blocks)
-                trend_y_eur = slope * trend_x_indices + intercept
-                trend_y_display = trend_y_eur * eur_to_sek if currency == 'SEK' else trend_y_eur
-                trend_times = times[start_index:start_index + blocks]
-                
-                # KORRIGERING: Ändra line.dash till 'dot'
-                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dot'), hoverinfo='x+y'))
-
-        # 24h Högsta/Lägsta linjer (använder den globala format_price_display)
-        if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"24h Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
-        if low_24h_display: figure.add_hline(y=low_24h_display, line_dash="dot", line_color="red", annotation_text=f"24h Lägsta: {format_price_display(low_24h_display)} {currency}", annotation_position="bottom right")
-
+        chart_data_store = {
+            'historical_data': historical_data,
+            'current_price_eur': current_price_eur,
+            'max_ohlc_eur': max_ohlc,
+            'min_ohlc_eur': min_ohlc,
+            'eur_to_sek': eur_to_sek,
+            'coin_symbol': coin_symbol
+        }
     else:
-        # Fallback för grafen om historik saknas
-        msg = f"Laddar historik ({ohlc_interval}-min) för {coin_label}..."
-        figure.add_trace(go.Scatter(x=[0], y=[0], mode='text', text=[msg], showlegend=False))
+        chart_data_store = None
         
-    figure.update_layout(title=f'{coin_label} Prisutveckling ({currency})', xaxis_title=f"Tid ({ohlc_interval} min)", yaxis_title=f"Pris ({currency})", template="plotly_white", margin=dict(l=40, r=40, t=40, b=40), height=400, hovermode="x unified", plot_bgcolor='white', paper_bgcolor='white', xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#f0f0f0'))
-    
-    # 2. GENERERA SAMMANFATTNINGSKORTEN (Din önskade "lista" med övriga)
+    # 2. GENERERA SAMMANFATTNINGSKORTEN
+    # ... (kod för summary cards, ingen ändring här) ...
     all_percent_changes = data.get('ALL_PERCENT_CHANGE', {}) 
     all_24h_range = data.get('ALL_24H_RANGE', {})
     summary_cards = []
@@ -649,7 +629,6 @@ def update_all_live_data(n, coin_symbol, currency):
                 high_24h = high_24h_eur
                 low_24h = low_224h_eur
             
-            # ANVÄND format_price_display här (lösning på NameError)
             formatted_price = format_price_display(current_price_loop)
             formatted_high = format_price_display(high_24h)
             formatted_low = format_price_display(low_24h)
@@ -660,11 +639,9 @@ def update_all_live_data(n, coin_symbol, currency):
             formatted_high = "N/A"
             formatted_low = "N/A"
             
-        # Välj färg för kortet baserat på 24h förändring
         change_24h = percent_data_loop.get('24h')
         price_color_loop = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
         
-        # Markera det valda kortet med en annan färg
         card_border_style = '2px solid #0056b3' if coin_symbol_loop == coin_symbol else '1px solid #e0e0e0'
         
         card_content = [
@@ -681,9 +658,9 @@ def update_all_live_data(n, coin_symbol, currency):
                     ])
                 ])
             ]),
-            html.Small("24h Högsta:", style={'color': '#6c757d', 'display': 'block', 'marginTop': '5px'}),
+            html.Small("24h Högsta (Ticker):", style={'color': '#6c757d', 'display': 'block', 'marginTop': '5px'}),
             html.Small(f"{formatted_high} {currency}", style={'color': 'green', 'fontWeight': 'bold', 'display': 'block'}),
-            html.Small("24h Lägsta:", style={'color': '#6c757d', 'marginTop': '5px', 'display': 'block'}),
+            html.Small("24h Lägsta (Ticker):", style={'color': '#6c757d', 'marginTop': '5px', 'display': 'block'}),
             html.Small(f"{formatted_low} {currency}", style={'color': 'red', 'fontWeight': 'bold', 'display': 'block'}),
         ]
         
@@ -696,9 +673,81 @@ def update_all_live_data(n, coin_symbol, currency):
         )
         summary_cards.append(card)
 
-    return summary_box, updated_text, figure, summary_cards
+    # Vi returnerar en "dummy" figur här, som den nya callbacken kommer att fylla i.
+    figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar diagram...'], textfont=dict(size=20, color="#0056b3")))
+    figure.update_layout(title=f'Laddar {coin_label} Prisutveckling...', template="plotly_white", height=400)
 
-# (Den gamla Slider-callbacken är borttagen, den nya logiken är inbäddad i create_selected_coin_box)
+    # Returnera data till store, inte figuren
+    return summary_box, updated_text, chart_data_store, currency, summary_cards
+
+
+@app.callback(
+    Output('live-update-graph', 'figure'),
+    [Input('chart-data-store', 'data'), Input('current-currency-store', 'data'), Input('trendline-checkboxes', 'value')],
+    [State('coin-dropdown', 'value')]
+)
+def update_trendline_visibility(chart_data_store, currency, selected_trends, coin_symbol):
+    
+    if chart_data_store is None:
+        figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar historik...'], textfont=dict(size=20, color="#0056b3")))
+        figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
+        return figure
+        
+    historical_data = chart_data_store['historical_data']
+    eur_to_sek = chart_data_store['eur_to_sek']
+    max_ohlc_eur = chart_data_store['max_ohlc_eur']
+    min_ohlc_eur = chart_data_store['min_ohlc_eur']
+    coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+    ohlc_interval = OHLC_CACHE_INTERVAL_MIN
+    
+    figure = go.Figure()
+
+    # KONVERTERING
+    if currency == 'SEK':
+        prices_display = [item['price'] * eur_to_sek for item in historical_data]
+        high_24h_display = max_ohlc_eur * eur_to_sek if max_ohlc_eur is not None else None
+        low_24h_display = min_ohlc_eur * eur_to_sek if min_ohlc_eur is not None else None
+    else: 
+        prices_display = [item['price'] for item in historical_data]
+        high_24h_display = max_ohlc_eur
+        low_24h_display = min_ohlc_eur
+    
+    # KORRIGERING: Lägg till 3600 sekunder (1 timme) för varje tidsstämpel i diagrammet
+    times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in historical_data]
+    
+    # Huvudkurslinjen
+    figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
+    
+    # 24h Högsta/Lägsta linjer (BASERAT PÅ OHLC-DATA)
+    if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"OHLC Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
+    if low_24h_display: figure.add_hline(y=low_24h_display, line_dash="dot", line_color="red", annotation_text=f"OHLC Lägsta: {format_price_display(low_24h_display)} {currency}", annotation_position="bottom right")
+
+    # Trendlinjer (filtrerade baserat på checkbox)
+    for trend_key, config in TREND_WINDOWS.items():
+        if trend_key in selected_trends: 
+            blocks = config['blocks']
+            
+            # Använd den historiska datan UTAN det sista aktuella priset för trendberäkning
+            # Detta undviker att den sista prisuppdateringen snedvrider trendlinjen för mycket
+            data_for_trend = historical_data[:-1] if len(historical_data) > 0 else [] 
+            
+            slope, intercept, start_index = calculate_trendline(data_for_trend, blocks)
+            
+            if slope is not None and start_index is not None:
+                trend_x_indices = np.arange(blocks)
+                trend_y_eur = slope * trend_x_indices + intercept
+                
+                # Konvertera trendlinjen till displayvaluta
+                trend_y_display = trend_y_eur * eur_to_sek if currency == 'SEK' else trend_y_eur
+                
+                # Tidpunkterna måste matcha segmentet vi beräknat trenden för
+                trend_times = times[start_index:start_index + blocks]
+                
+                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dot'), hoverinfo='x+y'))
+
+    figure.update_layout(title=f'{coin_label} Prisutveckling ({currency})', xaxis_title=f"Tid ({ohlc_interval} min)", yaxis_title=f"Pris ({currency})", template="plotly_white", margin=dict(l=40, r=40, t=40, b=40), height=400, hovermode="x unified", plot_bgcolor='white', paper_bgcolor='white', xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#f0f0f0'))
+
+    return figure
 
 # Callback för att uppdatera Dropdown när man klickar på ett summary-kort
 @app.callback(

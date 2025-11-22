@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.DEBUG,
 logger = logging.getLogger(__name__)
 
 # [KONSTANTER]
+# OBS: Dessa måste sättas som miljövariabler i din Render/deployment-miljö
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
@@ -108,14 +109,18 @@ DEFAULT_DATA = {
     'ALL_PERCENT_CHANGE': {},
 }
 
-# --- Hjälpfunktioner (Oförändrade) ---
+# --- Hjälpfunktioner ---
 
 def format_price_display(p):
+    """
+    Formaterar priset med rätt decimaler.
+    """
     if p is None: return "N/A"
     price_format = f"{p:,.4f}" if p < 10 else f"{p:,.2f}"
     return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
 
 def get_data_from_redis():
+    """Hämtar data från Redis cache."""
     if r:
         try:
             cached_data = r.get('crypto_data')
@@ -126,7 +131,7 @@ def get_data_from_redis():
     return None
 
 def fetch_exchange_rate():
-    # ... (funktionen oförändrad) ...
+    """Hämtar EUR/SEK växelkurs."""
     try:
         response = requests.get(EXCHANGE_RATE_URL, timeout=10)
         response.raise_for_status()
@@ -138,7 +143,7 @@ def fetch_exchange_rate():
         return 11.0
 
 def fetch_crypto_data():
-    # ... (funktionen oförändrad) ...
+    """Hämtar realtids Ticker data från Kraken."""
     try:
         t = time.time()
         sek_rate = fetch_exchange_rate()
@@ -172,8 +177,15 @@ def fetch_crypto_data():
         else:
             return DEFAULT_DATA
 
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ API-fel vid hämtning av Ticker: {e}. Använder standardvärden.")
+        return DEFAULT_DATA
+    except Exception as e:
+        logger.error(f"❌ Oväntat fel i Ticker-hantering: {e}")
+        return DEFAULT_DATA # <-- HÄR SLUTAR FÖRRA FUNKTIONEN. EN TOM RAD HÄR FIXAR SyntaxError.
+
 def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
-    # ... (funktionen oförändrad) ...
+    """Hämtar historisk OHLC (Open, High, Low, Close) data från Kraken."""
     time_ago = int(time.time()) - periods_ago_seconds 
     params = { 'pair': kraken_ticker, 'interval': interval, 'since': time_ago }
     try:
@@ -187,6 +199,7 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
         result_key = next(iter(ohlc_data['result'])) 
         data_list = ohlc_data['result'][result_key]
         
+        # Kolumnindex: 0=time, 4=close
         return [{'time': int(row[0]), 'price': float(row[4])} for row in data_list]
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching OHLC data (Interval {interval}) for {kraken_ticker}: {e}")
@@ -196,7 +209,7 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
         return []
 
 def calculate_percentage_changes(ohlc_data, current_price, periods):
-    # ... (funktionen oförändrad) ...
+    """Beräknar procentuell förändring baserat på OHLC data."""
     changes = {}
     if not ohlc_data or current_price is None or current_price == 0:
         return {key: None for key in periods}
@@ -207,6 +220,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
         blocks = config['blocks']
         interval = config['interval']
         
+        # Kontrollerar om vi har tillräckligt med data för perioden
         if (interval == OHLC_CACHE_INTERVAL_MIN and period in ['30m', '1h', '3h', '6h', '24h']) or \
            (interval == 1440 and period in ['7d', '30d']):
             
@@ -229,7 +243,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
 
 
 def calculate_trendline(historical_data, blocks):
-    # ... (funktionen oförändrad) ...
+    """Beräknar linjär trendlinje för en given datasegment."""
     if len(historical_data) < blocks:
         return None, None, None
     data_segment = historical_data[-blocks:]
@@ -243,7 +257,7 @@ def calculate_trendline(historical_data, blocks):
     return slope, intercept, start_index_global
 
 def format_change(c):
-    # ... (funktionen oförändrad) ...
+    """Formaterar procentuell förändring med färg och symbol."""
     if c is None: 
         return html.Span("N/A", style={'color': '#6c757d', 'fontWeight': 'normal'})
     
@@ -254,8 +268,34 @@ def format_change(c):
     symbol = '▲' if c > 0 else '▼'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
 
+# Hjälpfunktion för Telegram Alert
+def send_telegram_alert(coin_label, price, currency, threshold):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Telegram-tokens är inte konfigurerade. Alert skickas ej.")
+        return False
+        
+    message = (
+        f"🚨 KRYPTO ALERT 🚨\n"
+        f"Valuta: {coin_label}\n"
+        f"Pris: {format_price_display(price)} {currency}\n"
+        f"Gränsvärde uppnått: {format_price_display(threshold)} {currency}"
+    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message
+    }
+    
+    try:
+        response = requests.post(url, data=payload, timeout=10)
+        response.raise_for_status()
+        return response.json().get('ok', False)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Kunde inte skicka Telegram-meddelande: {e}")
+        return False
 
-# --- Bakgrundsjobb (Oförändrad logik) ---
+
+# --- Bakgrundsjobb ---
 
 def background_data_fetch(redis_instance):
     """Hämtar Ticker och OHLC data och cachar till Redis."""
@@ -373,15 +413,18 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
         children=[
+            # Rubrik med Emoji
             html.H2(html.Span([html.Span(f"{coin_emoji} ", style={'marginRight': '5px'}), f"{label} ({symbol})"]), style={'fontSize': '1.8em', 'color': '#0056b3', 'marginBottom': '10px'}),
             html.Div(
                 style={'display': 'flex', 'justifyContent': 'space-around', 'alignItems': 'center', 'flexWrap': 'wrap', 'borderBottom': '1px solid #dee2e6', 'paddingBottom': '15px', 'marginBottom': '15px'},
                 children=[
+                    # Nuvarande Pris
                     html.Div(style={'minWidth': '180px', 'textAlign': 'center'}, children=[
                         html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.P(price_text, id='current-price-display', style={'fontSize': '3.0em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
                     ]),
                     
+                    # 24h Intervall (från OHLC-data)
                     html.Div(style={'minWidth': '150px', 'textAlign': 'center', 'padding': '0 10px'}, children=[
                         html.P("24h Intervall (OHLC)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold'}),
                         html.Small(f"Hög: {format_price_display(high_display)} {currency}", style={'color': 'green', 'display': 'block'}),
@@ -390,6 +433,7 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
                 ]
             ),
             
+            # Prisrörelser
             html.Div(
                 style={'borderTop': '1px solid #dee2e6', 'paddingTop': '15px'},
                 children=[
@@ -412,63 +456,6 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
         ]
     )
 
-app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
-    html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
-        html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
-        
-        # Kontroller
-        html.Div(style={'display': 'flex', 'justifyContent': 'center', 'gap': '20px', 'alignItems': 'center', 'marginBottom': '30px', 'flexWrap': 'wrap'}, children=[
-            html.Div(style={'flexGrow': 1, 'maxWidth': '300px'}, children=[
-                html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
-                dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_PAIR_KEY.split(' ')[0], clearable=False),
-            ]),
-            html.Div(style={'flexGrow': 1, 'maxWidth': '180px'}, children=[
-                html.Label("Välj fiatvaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
-                dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in CURRENCIES], value='EUR', clearable=False),
-            ]),
-        ]),
-        
-        # SAMMANFATTNINGSBOXEN
-        html.Div(id='current-price-summary-box-container'),
-        
-        html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '20px'}),
-        
-        # Kontroller för trendlinjer
-        html.Div(style={'textAlign': 'center', 'marginBottom': '10px', 'padding': '10px 0', 'borderBottom': '1px solid #eee'}, children=[
-             html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px'}),
-             dcc.Checklist(
-                 id='trendline-checkboxes',
-                 options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items()],
-                 value=DEFAULT_TRENDS, 
-                 inline=True,
-                 style={'display': 'inline-block'}
-             ),
-             dcc.Store(id='chart-data-store'), 
-             dcc.Store(id='current-currency-store'),
-        ]),
-        
-        dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
-        
-        # Telegram Alerts (oförändrad)
-        html.Div(style={'marginTop': '40px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
-            html.H3('🔔 Telegram Alert-inställningar', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '15px'}),
-            html.P("Skickar notis när priset når eller överstiger ditt angivna gränsvärde."),
-            html.Div(style={'display': 'flex', 'gap': '10px', 'alignItems': 'center', 'flexWrap': 'wrap'}, children=[
-                dcc.Input(id='alert-threshold', type='number', placeholder='Ange gränsvärde', style={'flexGrow': 1, 'padding': '10px', 'borderRadius': '6px', 'border': '1px solid #ccc', 'minWidth': '150px'}),
-                html.Button('Aktivera Alert', id='alert-button', n_clicks=0, style={'backgroundColor': '#17a2b8', 'color': 'white', 'padding': '10px 15px', 'borderRadius': '6px', 'border': 'none', 'cursor': 'pointer', 'fontWeight': 'bold', 'transition': 'background-color 0.3s ease', 'flexShrink': 0})
-            ]),
-            html.Div(id='alert-output', style={'marginTop': '10px', 'fontSize': '0.9em', 'minHeight': '20px'})
-        ]),
-        
-        # Sammanfattning av alla valutor (NY LIST/TABELLVY)
-        html.Div(style={'marginTop': '50px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
-            html.H3('📊 Sammanfattning av alla valutor', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
-            dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
-        ]),
-    ]),
-    dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
-])
-
 # --- NY FUNKTION FÖR RAD-RENDERARE ---
 
 def create_summary_row(coin_symbol, label, current_price, high_24h, low_24h, percent_data, currency, is_selected, eur_to_sek):
@@ -480,7 +467,7 @@ def create_summary_row(coin_symbol, label, current_price, high_24h, low_24h, per
     change_24h = percent_data.get('24h')
     change_24h_display = format_change(change_24h)
     
-    # Färgkodning baserad på 24h-förändring
+    # Färgkodning baserad på val
     row_bg_color = '#f0f8ff' if is_selected else 'white'
     
     # Konvertera priser till displayvaluta
@@ -516,12 +503,12 @@ def create_summary_row(coin_symbol, label, current_price, high_24h, low_24h, per
             style={'flex': '0 0 120px', 'textAlign': 'right', 'color': 'red'}
         ),
         # KORTA PERIODER (%)
-        html.Div(format_change(percent_data.get('30m')), style={'flex': '0 0 80px', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('1h')), style={'flex': '0 0 80px', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('3h')), style={'flex': '0 0 80px', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('30m')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        html.Div(format_change(percent_data.get('1h')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        html.Div(format_change(percent_data.get('3h')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
         # LÅNGA PERIODER (%)
-        html.Div(format_change(percent_data.get('7d')), style={'flex': '0 0 80px', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('30d')), style={'flex': '0 0 80px', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('7d')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
+        html.Div(format_change(percent_data.get('30d')), style={'flex': '0 0 80px', 'textAlign': 'right', 'whiteSpace': 'nowrap'}),
     ]
 
     return html.Div(
@@ -542,6 +529,66 @@ def create_summary_row(coin_symbol, label, current_price, high_24h, low_24h, per
         children=row_columns
     )
 
+
+app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
+    html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
+        
+        # 1. Namnbyte implementerat
+        html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
+        
+        # Kontroller
+        html.Div(style={'display': 'flex', 'justifyContent': 'center', 'gap': '20px', 'alignItems': 'center', 'marginBottom': '30px', 'flexWrap': 'wrap'}, children=[
+            html.Div(style={'flexGrow': 1, 'maxWidth': '300px'}, children=[
+                html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
+                dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_PAIR_KEY.split(' ')[0], clearable=False),
+            ]),
+            html.Div(style={'flexGrow': 1, 'maxWidth': '180px'}, children=[
+                html.Label("Välj fiatvaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
+                dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in CURRENCIES], value='EUR', clearable=False),
+            ]),
+        ]),
+        
+        # SAMMANFATTNINGSBOXEN (Huvudboxen)
+        html.Div(id='current-price-summary-box-container'),
+        
+        html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '20px'}),
+        
+        # Kontroller för trendlinjer
+        html.Div(style={'textAlign': 'center', 'marginBottom': '10px', 'padding': '10px 0', 'borderBottom': '1px solid #eee'}, children=[
+             html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px'}),
+             dcc.Checklist(
+                 id='trendline-checkboxes',
+                 options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items()],
+                 value=DEFAULT_TRENDS, 
+                 inline=True,
+                 style={'display': 'inline-block'}
+             ),
+             dcc.Store(id='chart-data-store'), 
+             dcc.Store(id='current-currency-store'),
+        ]),
+        
+        dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
+        
+        # Telegram Alerts
+        html.Div(style={'marginTop': '40px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
+            html.H3('🔔 Telegram Alert-inställningar', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '15px'}),
+            html.P("Skickar notis när priset når eller överstiger ditt angivna gränsvärde."),
+            html.Div(style={'display': 'flex', 'gap': '10px', 'alignItems': 'center', 'flexWrap': 'wrap'}, children=[
+                dcc.Input(id='alert-threshold', type='number', placeholder='Ange gränsvärde', style={'flexGrow': 1, 'padding': '10px', 'borderRadius': '6px', 'border': '1px solid #ccc', 'minWidth': '150px'}),
+                html.Button('Aktivera Alert', id='alert-button', n_clicks=0, style={'backgroundColor': '#17a2b8', 'color': 'white', 'padding': '10px 15px', 'borderRadius': '6px', 'border': 'none', 'cursor': 'pointer', 'fontWeight': 'bold', 'transition': 'background-color 0.3s ease', 'flexShrink': 0})
+            ]),
+            html.Div(id='alert-output', style={'marginTop': '10px', 'fontSize': '0.9em', 'minHeight': '20px'})
+        ]),
+        
+        # Sammanfattning av alla valutor (Nu som lista/tabell)
+        html.Div(style={'marginTop': '50px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6'}, children=[
+            html.H3('📊 Sammanfattning av alla valutor', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
+            dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
+        ]),
+    ]),
+    dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
+])
+
 # --- Callbacks ---
 
 @app.callback(
@@ -549,7 +596,7 @@ def create_summary_row(coin_symbol, label, current_price, high_24h, low_24h, per
     Output('last-updated', 'children'),
     Output('chart-data-store', 'data'), 
     Output('current-currency-store', 'data'), 
-    Output('crypto-summary', 'children'), # ÄNDRAD FÖR ATT RETURNERA LISTVY
+    Output('crypto-summary', 'children'),
     [Input('interval-component', 'n_intervals'), Input('coin-dropdown', 'value'), Input('currency-dropdown', 'value')]
 )
 def update_all_live_data(n, coin_symbol, currency):
@@ -612,16 +659,15 @@ def update_all_live_data(n, coin_symbol, currency):
     else:
         summary_box = create_selected_coin_box(coin_label, coin_symbol, 0.0, currency, eur_to_sek, None, None, percent_data)
         
-    # 2. GENERERA SAMMANFATTNINGS-LISTA/TABELL (NY LOGIK)
+    # 2. GENERERA SAMMANFATTNINGS-LISTA/TABELL
     
     # Skapa rubrikraden
     header_style = {
         'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 
         'padding': '10px 15px', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0',
-        'marginBottom': '5px', 'color': '#495057', 'flexWrap': 'wrap'
+        'marginBottom': '5px', 'color': '#495057', 'flexWrap': 'wrap', 'fontSize': '0.9em'
     }
     
-    # Definiera kolumnernas bredd och justering
     header_columns = [
         html.Div("Valuta", style={'flex': '0 0 160px', 'textAlign': 'left'}),
         html.Div(f"Pris ({currency})", style={'flex': '0 0 120px', 'textAlign': 'right'}),
@@ -673,7 +719,7 @@ def update_all_live_data(n, coin_symbol, currency):
     [State('coin-dropdown', 'value')]
 )
 def update_trendline_visibility(chart_data_store, currency, selected_trends, coin_symbol):
-    # ... (logiken är oförändrad) ...
+    
     if chart_data_store is None:
         figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar historik...'], textfont=dict(size=20, color="#0056b3")))
         figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
@@ -697,6 +743,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         high_24h_display = max_ohlc_eur
         low_24h_display = min_ohlc_eur
     
+    # Lägg till 1 timme för att konvertera UTC till CET/CEST
     times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in historical_data]
     
     figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
@@ -746,14 +793,13 @@ def update_dropdown_on_card_click(n_clicks, ids):
     except (json.JSONDecodeError, KeyError):
         raise dash.exceptions.PreventUpdate
 
-# Callback för Telegram Alert (oförändrad)
+# Callback för Telegram Alert
 @app.callback(
     Output('alert-output', 'children'), 
     [Input('alert-button', 'n_clicks')], 
     [State('alert-threshold', 'value'), State('coin-dropdown', 'value'), State('currency-dropdown', 'value')]
 )
 def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
-    # ... (logiken är oförändrad) ...
     if n_clicks is None or n_clicks == 0: return ""
     
     ctx = dash.callback_context
@@ -783,4 +829,5 @@ def handle_telegram_alert(n_clicks, threshold, coin_symbol, currency):
         return html.Span(f"✅ Alert satt för {coin_label}. Trigger vid {format_price_display(threshold_val)} {currency}. Nuvarande pris: {format_price_display(current_price)}.", style={'color': '#495057'})
 
 if __name__ == '__main__':
+    # Observera: För körning lokalt måste REDIS_URL, TELEGRAM_BOT_TOKEN och TELEGRAM_CHAT_ID vara satta som miljövariabler.
     app.run_server(debug=True)

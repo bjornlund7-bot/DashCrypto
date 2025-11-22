@@ -89,13 +89,12 @@ TREND_WINDOWS = {
 DEFAULT_TRENDS = list(TREND_WINDOWS.keys()) 
 
 # --- NY KONSTANT FÖR LARM TRIGGERS ---
-ALERT_THRESHOLDS = {
-    'up': [10, 20, 30, 40, 50, 75, 100],
-    'down': [-10, -20, -25, -30, -50, -75]
-}
+# Uppgångar sorteras fallande (50, 40, 30...) för att kolla det högsta först
+ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
+# Nedgångar sorteras stigande (-75, -50, -30...) för att kolla det lägsta (mest negativa) först
+ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75]) 
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
-# Spärrtid för att undvika spammiga meddelanden. En gång per 4 timmar per trigger.
-ALERT_DEBOUNCE_SECONDS = 4 * 3600 
+ALERT_DEBOUNCE_SECONDS = 4 * 3600 # 4 timmar
 
 # [REDIS KONFIGURATION]
 REDIS_URL = os.environ.get('REDIS_URL')
@@ -137,7 +136,6 @@ def get_data_from_redis():
             logger.error(f"Redis-anslutningsfel i callback: {e}")
     return None
 
-# (Övriga fetch- och beräkningsfunktioner är oförändrade, utelämnade för korthet)
 def fetch_exchange_rate(): # ... (kod)
     try:
         response = requests.get(EXCHANGE_RATE_URL, timeout=10)
@@ -269,7 +267,7 @@ def format_change(c):
     symbol = '▲' if c > 0 else '▼'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold', 'fontSize': '0.85em'})
 
-# --- NY LARM FUNKTION ---
+# --- NY LARM FUNKTIONER ---
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("Telegram-tokens är inte konfigurerade. Meddelande skickas ej.")
@@ -292,9 +290,8 @@ def send_telegram_message(message):
 
 def check_and_send_alerts(all_percent_changes, r_instance):
     """
-    Kontrollerar alla kryptovalutors procentuella förändringar mot definierade triggers 
-    och skickar ett Telegram-meddelande om gränsen uppnås.
-    Använder Redis för att spärra (debounce) meddelanden.
+    Kontrollerar alla kryptovalutors procentuella förändringar.
+    Skickar ENDAST det högsta uppnådda positiva larmet eller det lägsta uppnådda negativa larmet per tidsperiod.
     """
     if not r_instance:
         return
@@ -308,39 +305,49 @@ def check_and_send_alerts(all_percent_changes, r_instance):
             if change_percent is None:
                 continue
             
-            # 1. Kontrollera uppgångar
+            # --- UPPGÅNGAR (Sorterade från 100% ned till 10%) ---
             if change_percent > 0:
-                for threshold in ALERT_THRESHOLDS['up']:
+                highest_threshold_met = None
+                for threshold in ALERT_THRESHOLDS_UP:
                     if change_percent >= threshold:
-                        key = f"alert:{coin_symbol}:{period}:+{threshold}"
+                        highest_threshold_met = threshold
+                        break # Bryt när det högsta uppnådda hittas
+                
+                if highest_threshold_met is not None:
+                    # Använd det HÖGSTA uppnådda värdet i spärrnyckeln
+                    key = f"alert:{coin_symbol}:{period}:+{highest_threshold_met}"
+                    
+                    if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
+                        message = (
+                            f"🔥 **HÖGSTA PRISUPPGÅNG ALERT** 🔥\n"
+                            f"Valuta: *{coin_label} ({coin_symbol})*\n"
+                            f"Rörelse: *+{change_percent:.2f}%* under {period}\n"
+                            f"Trigger: Nådde *+{highest_threshold_met}%* eller mer."
+                        )
+                        send_telegram_message(message)
+                        logger.info(f"Telegram Alert skickad: {coin_symbol} HÖGST +{highest_threshold_met}% på {period}")
                         
-                        # Använd Redis SETNX (SET if Not eXists) för att implementera spärren
-                        if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
-                            message = (
-                                f"🔥 **PRISUPPGÅNG ALERT** 🔥\n"
-                                f"Valuta: *{coin_label} ({coin_symbol})*\n"
-                                f"Rörelse: *+{change_percent:.2f}%* under {period}\n"
-                                f"Trigger: Nådde *+{threshold}%* eller mer."
-                            )
-                            send_telegram_message(message)
-                            logger.info(f"Telegram Alert skickad: {coin_symbol} +{threshold}% på {period}")
-                            
-            # 2. Kontrollera nedgångar
+            # --- NEDGÅNGAR (Sorterade från -75% upp till -10%) ---
             elif change_percent < 0:
-                for threshold in ALERT_THRESHOLDS['down']:
-                    # Eftersom tröskelvärdena är negativa (-10, -20 etc.), måste vi kolla om värdet är mindre än eller lika med tröskelvärdet
+                lowest_threshold_met = None
+                for threshold in ALERT_THRESHOLDS_DOWN:
                     if change_percent <= threshold: 
-                        key = f"alert:{coin_symbol}:{period}:{threshold}"
-                        
-                        if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
-                            message = (
-                                f"🔻 **PRISNEDGÅNG ALERT** 🔻\n"
-                                f"Valuta: *{coin_label} ({coin_symbol})*\n"
-                                f"Rörelse: *{change_percent:.2f}%* under {period}\n"
-                                f"Trigger: Nådde *{threshold}%* eller mindre."
-                            )
-                            send_telegram_message(message)
-                            logger.info(f"Telegram Alert skickad: {coin_symbol} {threshold}% på {period}")
+                        lowest_threshold_met = threshold
+                        break # Bryt när det lägsta (mest negativa) uppnådda hittas
+                
+                if lowest_threshold_met is not None:
+                    # Använd det LÄGSTA uppnådda värdet i spärrnyckeln
+                    key = f"alert:{coin_symbol}:{period}:{lowest_threshold_met}"
+                    
+                    if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
+                        message = (
+                            f"🔻 **LÄGSTA PRISNEDGÅNG ALERT** 🔻\n"
+                            f"Valuta: *{coin_label} ({coin_symbol})*\n"
+                            f"Rörelse: *{change_percent:.2f}%* under {period}\n"
+                            f"Trigger: Nådde *{lowest_threshold_met}%* eller mindre."
+                        )
+                        send_telegram_message(message)
+                        logger.info(f"Telegram Alert skickad: {coin_symbol} LÄGST {lowest_threshold_met}% på {period}")
 
 
 # --- Bakgrundsjobb ---
@@ -438,20 +445,17 @@ if r:
 app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
 
+# Resten av Dash-komponenterna är oförändrade (inklusive create_selected_coin_box och create_summary_row)
+# ... (HTML-layout och Callbacks för Dashboarden är oförändrade)
 def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur, low_eur, percent_data):
-    # (Denna funktion är oförändrad)
     price_text = f"{format_price_display(price)} {currency}"
     coin_emoji = CRYPTO_EMOJIS.get(symbol, '')
-    
     change_24h = percent_data.get('24h')
     price_color = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
-    
     high_display = high_eur * eur_rate if currency == 'SEK' and high_eur is not None else high_eur
     low_display = low_eur * eur_rate if currency == 'SEK' and low_eur is not None else low_eur
-
     periods_col1 = ['30m', '1h', '3h'] 
     periods_col2 = ['6h', '24h', '7d', '30d'] 
-
     def create_change_display(period):
         return html.Div(
             style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
@@ -460,7 +464,6 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
                 format_change(percent_data.get(period))
             ]
         )
-    
     col1 = html.Div(
         style={'flex': '1 1 30%', 'minWidth': '220px', 'paddingRight': '15px', 'borderRight': '1px solid #dee2e6'},
         children=[
@@ -474,7 +477,6 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             ]),
         ]
     )
-
     col2 = html.Div(
         style={'flex': '1 1 20%', 'minWidth': '150px', 'padding': '0 15px', 'borderRight': '1px solid #dee2e6'},
         children=[
@@ -491,7 +493,6 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             ])
         ]
     )
-
     col3 = html.Div(
         style={'flex': '1 1 45%', 'minWidth': '250px', 'paddingLeft': '15px'},
         children=[
@@ -511,7 +512,6 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             )
         ]
     )
-
     return html.Div(
         id='current-price-box',
         style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'},
@@ -522,16 +522,11 @@ def create_selected_coin_box(label, symbol, price, currency, eur_rate, high_eur,
             )
         ]
     )
-
 def create_summary_row(coin_symbol, label, current_price, percent_data, currency, is_selected, eur_to_sek):
-    # (Denna funktion är oförändrad)
     coin_emoji = CRYPTO_EMOJIS.get(coin_symbol, '')
-    
     row_bg_color = '#f0f8ff' if is_selected else 'white'
     price_display = current_price * eur_to_sek if currency == 'SEK' and current_price is not None else current_price
-    
     col_style = {'flex': '1 1 10%', 'textAlign': 'right', 'whiteSpace': 'nowrap', 'padding': '0 5px', 'fontSize': '0.8em'}
-
     row_columns = [
         html.Div(
             style={'flex': '0 0 160px', 'textAlign': 'left', 'fontWeight': 'bold', 'color': '#0056b3', 'paddingLeft': '5px', 'whiteSpace': 'nowrap'},
@@ -548,7 +543,6 @@ def create_summary_row(coin_symbol, label, current_price, percent_data, currency
         html.Div(format_change(percent_data.get('7d')), style=col_style),
         html.Div(format_change(percent_data.get('30d')), style=col_style),
     ]
-
     return html.Div(
         id={'type': 'summary-card', 'index': coin_symbol},
         n_clicks=0,
@@ -565,17 +559,10 @@ def create_summary_row(coin_symbol, label, current_price, percent_data, currency
         },
         children=row_columns
     )
-
-
 app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
     html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
-        
         html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
-        
-        # --- TOPPSEKTION: Kontroller och Huvudbox (som en enda flex-rad) ---
         html.Div(style={'display': 'flex', 'gap': '20px', 'marginBottom': '20px', 'flexWrap': 'wrap'}, children=[
-            
-            # Kontroller (Dropdowns) - Fast bredd
             html.Div(style={'flex': '0 0 200px', 'minWidth': '200px'}, children=[
                 html.H3('⚙️ Kontroller', style={'fontSize': '1.3em', 'color': '#495057', 'marginBottom': '15px'}),
                 html.Div(style={'marginBottom': '20px'}, children=[
@@ -587,21 +574,14 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                     dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in CURRENCIES], value='EUR', clearable=False),
                 ]),
             ]),
-            
-            # Prissammanfattningsboxen - Flexibel bredd
             html.Div(style={'flex': '1 1 600px', 'minWidth': '600px'}, children=[
                 html.Div(id='current-price-summary-box-container'),
                 html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '0px'}),
             ]),
-            
-            # Dolda Store komponenter
             dcc.Store(id='chart-data-store'), 
             dcc.Store(id='current-currency-store'),
         ]),
-        
-        # --- GRAF SEKTION (FULL BREDD) ---
         html.Div(style={'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
-            # Kontroller för trendlinjer
             html.Div(style={'textAlign': 'center', 'marginBottom': '10px'}, children=[
                  html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px', 'fontSize': '0.9em'}),
                  dcc.Checklist(
@@ -614,25 +594,21 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             ]),
             dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
         ]),
-        
-        # --- SAMMANFATTNINGSLISTA SEKTION (FULL BREDD) ---
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
              html.H3('📊 Sammanfattning: Prisrörelser', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
              dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
         ]),
-        
-        # --- Telegram Alert Status (FÖR ATT VISA ATT SYSTEMET KÖR) ---
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
-            html.P('Detta system är nu aktivt. Aviseringar skickas automatiskt till Telegram när en kryptovaluta når någon av följande trösklar under 30m, 1h, 3h, 6h, 12h eller 24h:', style={'margin': '0 0 10px 0'}),
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås under 30m, 1h, 3h, 6h, 12h eller 24h:', style={'margin': '0 0 10px 0'}),
             html.Div(style={'display': 'flex', 'gap': '30px'}, children=[
                 html.Div([
-                    html.P('**Uppgångar:**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0'}),
-                    html.Ul([html.Li(f'+{t}%') for t in ALERT_THRESHOLDS['up']], style={'marginTop': '5px', 'paddingLeft': '20px'})
+                    html.P('**Uppgångar (Högsta skickas):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0'}),
+                    html.Ul([html.Li(f'+{t}%') for t in ALERT_THRESHOLDS_UP[::-1]], style={'marginTop': '5px', 'paddingLeft': '20px'})
                 ]),
                 html.Div([
-                    html.P('**Nedgångar:**', style={'fontWeight': 'bold', 'color': '#dc3545', 'margin': '0'}),
-                    html.Ul([html.Li(f'{t}%') for t in ALERT_THRESHOLDS['down']], style={'marginTop': '5px', 'paddingLeft': '20px'})
+                    html.P('**Nedgångar (Lägsta skickas):**', style={'fontWeight': 'bold', 'color': '#dc3545', 'margin': '0'}),
+                    html.Ul([html.Li(f'{t}%') for t in ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px'})
                 ])
             ]),
              html.P(f"Obs! Samma alert skickas max en gång per {ALERT_DEBOUNCE_SECONDS / 3600:.0f} timmar.", style={'fontSize': '0.9em', 'color': '#6c757d', 'marginTop': '10px'}),
@@ -641,16 +617,13 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
 ])
 
-# --- Callbacks (Endast de gamla alert-callbacksen är borttagna) ---
-
-# Huvud-Callback: Uppdaterar all live data (oförändrad logik)
+# Huvud-Callback: Uppdaterar all live data 
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
     Output('last-updated', 'children'),
     Output('chart-data-store', 'data'), 
     Output('current-currency-store', 'data'), 
     Output('crypto-summary', 'children'),
-    
     [Input('interval-component', 'n_intervals'), 
      Input('coin-dropdown', 'value'), 
      Input('currency-dropdown', 'value')]
@@ -678,7 +651,6 @@ def update_all_live_data(n, coin_symbol, currency):
     all_24h_range_ohlc = data.get('ALL_24H_RANGE_OHLC', {})
     selected_coin_24h_range = all_24h_range_ohlc.get(coin_symbol, {})
     
-    # --- Förbered OHLC data för grafen och Store ---
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
     kraken_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
     ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{kraken_ticker}'
@@ -702,7 +674,6 @@ def update_all_live_data(n, coin_symbol, currency):
             'coin_symbol': coin_symbol
         }
     
-    # 1. GENERERA SAMMANFATTNINGSBOXEN
     if current_price_display_currency is not None:
         summary_box = create_selected_coin_box(
             coin_label, coin_symbol, 
@@ -715,7 +686,6 @@ def update_all_live_data(n, coin_symbol, currency):
     else:
         summary_box = create_selected_coin_box(coin_label, coin_symbol, 0.0, currency, eur_to_sek, None, None, percent_data)
         
-    # 2. GENERERA SAMMANFATTNINGS-LISTA/TABELL (med sortering)
     summary_data = []
     for label in COINS_LABELS:
         coin_symbol_loop = label.split(' ')[0]
@@ -782,7 +752,6 @@ def update_all_live_data(n, coin_symbol, currency):
     [State('coin-dropdown', 'value')]
 )
 def update_trendline_visibility(chart_data_store, currency, selected_trends, coin_symbol):
-    # (Logik oförändrad)
     if chart_data_store is None:
         figure = go.Figure(go.Scatter(x=[0], y=[0], mode='text', text=['Laddar historik...'], textfont=dict(size=20, color="#0056b3")))
         figure.update_layout(title="Hämtar data...", template="plotly_white", height=400)
@@ -854,7 +823,6 @@ def update_dropdown_on_card_click(n_clicks, ids):
         return coin_symbol
     except (json.JSONDecodeError, KeyError):
         raise dash.exceptions.PreventUpdate
-
 
 if __name__ == '__main__':
     app.run_server(debug=True)

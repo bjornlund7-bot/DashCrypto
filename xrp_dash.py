@@ -99,6 +99,10 @@ ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
+# NY: Tröskelvärden för Handelsvärde alerts
+TRADE_VALUE_ALERTS = sorted([7, 10, 20, 30, 50], reverse=True) 
+TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
+
 # [REDIS KONFIGURATION]
 REDIS_URL = os.environ.get('REDIS_URL')
 r = None
@@ -202,8 +206,8 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             'symbol': coin_symbol_loop,
             'price_eur': price_eur,
             'percent_data': percent_data_loop,
-            'trade_value_int': trade_value_int, # NY: Handelsvärde
-            'sort_trade_value': sort_trade_value, # NY: Sorteringsnyckel för Handelsvärde
+            'trade_value_int': trade_value_int, 
+            'sort_trade_value': sort_trade_value, 
             'sort_30m': sort_key_30m,
             'sort_1h': sort_key_1h,
             'sort_6h': sort_key_6h
@@ -240,7 +244,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         change_1h = format_change_telegram(item['percent_data'].get('1h'))
         change_6h = format_change_telegram(item['percent_data'].get('6h'))
         
-        trade_value_str = format_trade_value_telegram(item['trade_value_int']) # NY
+        trade_value_str = format_trade_value_telegram(item['trade_value_int']) 
         
         row = f"{symbol} | {price_display} | {change_30m} |{change_1h} |{change_6h} |{trade_value_str}"
         table_rows.append(row)
@@ -389,10 +393,12 @@ def calculate_trade_value(historical_data, current_price_eur):
         
         slope, intercept, _, _, _ = linregress(x_values, y_values)
         
+        # Trendlinjens pris vid den sista datapunkten (nuvarande tid)
         Tx = slope * (blocks - 1) + intercept 
         
         if V is not None and V != 0:
             # Hx = (((Tx - V) / V) * 100) * weight
+            # Handelsvärdet är den viktade summan av skillnaden mellan trendpris (Tx) och nuvarande pris (V) i procent
             Hx = (((Tx - V) / V) * 100) * weight
             trade_value += Hx
         else:
@@ -401,7 +407,6 @@ def calculate_trade_value(historical_data, current_price_eur):
     return trade_value if trade_value is not None else None
 
 def format_change(c):
-    # ... (oförändrad) ...
     """Formaterar procentuell förändring med färg och symbol."""
     if c is None: 
         return html.Span("N/A", style={'color': '#6c757d', 'fontWeight': 'normal'})
@@ -426,6 +431,25 @@ def format_trade_value_display(v):
     color = '#006400' if val > 0 else '#8B0000' 
     symbol = '▲' if val > 0 else '▼'
     return html.Span(f"{symbol} {abs(val)}", style={'color': color, 'fontWeight': 'bold', 'fontSize': '0.85em'})
+
+def format_price_color_summary(price_in_base, change_24h):
+    """NY: Färgkodar priset i sammanfattningen baserat på 24h förändring."""
+    if price_in_base is None: 
+        return html.Div("N/A", style={'fontWeight': 'bold', 'color': '#6c757d', 'paddingRight': '5px'})
+    
+    price_str = format_price_display(price_in_base)
+    
+    color = '#495057' # Svart/Grå
+    if change_24h is not None:
+        if change_24h >= 0.01:
+            color = '#28a745' # Grön
+        elif change_24h <= -0.01:
+            color = '#dc3545' # Röd
+    
+    return html.Div(
+        price_str, 
+        style={'flex': '0 0 100px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px', 'color': color}
+    )
 
 def send_telegram_message(message):
     # ... (oförändrad) ...
@@ -468,7 +492,8 @@ def background_data_fetch(redis_instance):
             all_percent_changes = {}
             all_24h_range_ohlc = {} 
             alert_data_for_sending = {} 
-            
+            trade_value_alert_data = {} # NY
+
             # 1. Hämta data och beräkna %-förändring OCH 24h Hög/Låg för ALLA VALUTOR
             for label, ticker in CRYPTO_PAIRS.items():
                 coin_symbol = label.split(' ')[0]
@@ -481,6 +506,7 @@ def background_data_fetch(redis_instance):
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
+                trade_value_int = None
                 if ohlc_5min_data:
                     prices_eur = [item['price'] for item in ohlc_5min_data]
                     if prices_eur:
@@ -488,7 +514,14 @@ def background_data_fetch(redis_instance):
                         min_ohlc = min(prices_eur)
                         all_24h_range_ohlc[coin_symbol] = {'high_eur': max_ohlc, 'low_eur': min_ohlc}
                     
-                    # NYCKELÄNDRING FÖR ATT CACHA OHLC-DATA FÖR ALLA VALUTOR
+                    # Beräkna Handelsvärdet (Behöver aktuellt pris som sista punkt)
+                    historical_data_with_current = ohlc_5min_data.copy()
+                    historical_data_with_current.append({'time': new_data.get('timestamp', time.time()), 'price': current_price_eur})
+                    trade_value = calculate_trade_value(historical_data_with_current, current_price_eur)
+                    if trade_value is not None:
+                        trade_value_int = int(round(trade_value))
+
+                    # Cacha OHLC-data (fortfarande utan nuvarande pris)
                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                          
@@ -512,11 +545,18 @@ def background_data_fetch(redis_instance):
                     'price_eur': current_price_eur 
                 }
                 
+                # NY: Handelsvärde data för alerts
+                trade_value_alert_data[coin_symbol] = {
+                    'trade_value': trade_value_int,
+                    'price_eur': current_price_eur
+                }
+
                 time.sleep(0.1) 
             
             # --- Steg 2: KÖR ALERT KONTROLL ---
             if redis_instance:
                 check_and_send_alerts(alert_data_for_sending, redis_instance)
+                check_and_send_trade_value_alerts(trade_value_alert_data, redis_instance) # NY
             
             # --- Steg 3: SPARA TILL REDIS ---
             new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
@@ -536,7 +576,65 @@ def background_data_fetch(redis_instance):
         except Exception as e:
             logger.error(f"❌ Fel i bakgrundstråd: {e}")
             time.sleep(60)
+
+def check_and_send_trade_value_alerts(alert_data, r_instance):
+    """NY FUNKTION: Kontrollerar och skickar alerts baserat på Handelsvärdet."""
+    if not r_instance:
+        return
+        
+    for coin_symbol, data in alert_data.items():
+        trade_value = data.get('trade_value')
+        current_price_eur = data.get('price_eur')
+        coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+        
+        if trade_value is None or current_price_eur is None:
+            continue
             
+        formatted_price = format_price_telegram(current_price_eur)
+        
+        # --- Positivt Handelsvärde ---
+        if trade_value >= 0:
+            highest_threshold_met = None
+            for threshold in TRADE_VALUE_ALERTS:
+                if trade_value >= threshold:
+                    highest_threshold_met = threshold
+                    break
+            
+            if highest_threshold_met is not None:
+                key = f"tv_alert:{coin_symbol}:+{highest_threshold_met}"
+                
+                if r_instance.set(key, 1, ex=TRADE_VALUE_DEBOUNCE_SECONDS, nx=True):
+                    message = (
+                        f"🔥 **HÖGT HANDELSVÄRDE ALERT** 🔥\n"
+                        f"Valuta: *{coin_label} ({coin_symbol})*\n"
+                        f"Aktuellt Pris: *{formatted_price} EUR*\n"
+                        f"Handelsvärde ($H.V.$): **+{trade_value}** (Tröskel: +{highest_threshold_met})"
+                    )
+                    send_telegram_message(message)
+                    logger.info(f"Telegram TV Alert skickad: {coin_symbol} HÖGT +{highest_threshold_met}")
+
+        # --- Negativt Handelsvärde ---
+        elif trade_value < 0:
+            lowest_threshold_met = None
+            # Iterera över trösklar men kontrollera mot negativa värden
+            for threshold in TRADE_VALUE_ALERTS:
+                if trade_value <= -threshold:
+                    lowest_threshold_met = threshold
+                    break
+                    
+            if lowest_threshold_met is not None:
+                key = f"tv_alert:{coin_symbol}:-{lowest_threshold_met}"
+                
+                if r_instance.set(key, 1, ex=TRADE_VALUE_DEBOUNCE_SECONDS, nx=True):
+                    message = (
+                        f"🔻 **LÅGT HANDELSVÄRDE ALERT** 🔻\n"
+                        f"Valuta: *{coin_label} ({coin_symbol})*\n"
+                        f"Aktuellt Pris: *{formatted_price} EUR*\n"
+                        f"Handelsvärde ($H.V.$): **{trade_value}** (Tröskel: -{lowest_threshold_met})"
+                    )
+                    send_telegram_message(message)
+                    logger.info(f"Telegram TV Alert skickad: {coin_symbol} LÅGT -{lowest_threshold_met}")
+
 def check_and_send_alerts(alert_data, r_instance):
     # ... (oförändrad) ...
     if not r_instance:
@@ -657,6 +755,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
     price_text = f"{format_price_display(price)} {currency}"
     coin_emoji = CRYPTO_EMOJIS.get(symbol, '')
     
+    # Prisfärg baserat på 24h förändring (används endast här, inte i summary)
     change_24h = percent_data.get('24h')
     price_color = '#28a745' if change_24h is not None and change_24h > 0 else '#dc3545' if change_24h is not None and change_24h < 0 else '#495057'
     
@@ -769,35 +868,35 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
 def create_summary_row(coin_symbol, label, current_price, percent_data, trade_value_int, currency, is_selected, eur_to_sek): 
     """
     Skapar en rad i sammanfattningslistan. 
-    NY: Inkluderar trade_value_int.
+    NY: Använder format_price_color_summary för priset.
     """
     coin_emoji = CRYPTO_EMOJIS.get(coin_symbol, '')
     
     row_bg_color = '#f0f8ff' if is_selected else 'white'
-    price_display = current_price
     
     col_style = {'flex': '1 1 10%', 'textAlign': 'right', 'whiteSpace': 'nowrap', 'padding': '0 5px', 'fontSize': '0.8em'}
     
     # Anpassad stil för Handelsvärdet
     trade_value_style = {'flex': '0 0 80px', 'textAlign': 'right', 'padding': '0 5px', 'fontSize': '0.8em', 'fontWeight': 'bold'}
 
+    # Hämta 24h förändring för färgkodning
+    change_24h = percent_data.get('24h')
 
     row_columns = [
         html.Div(
             style={'flex': '0 0 160px', 'textAlign': 'left', 'fontWeight': 'bold', 'color': '#0056b3', 'paddingLeft': '5px', 'whiteSpace': 'nowrap'},
             children=[html.Span(f"{coin_emoji} {coin_symbol}")]
         ),
-        html.Div(
-            f"{format_price_display(price_display)}",
-            style={'flex': '0 0 100px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}
-        ),
+        # NY: Använd format_price_color_summary för priset
+        format_price_color_summary(current_price, change_24h),
+        
         html.Div(format_change(percent_data.get('30m')), style=col_style),
         html.Div(format_change(percent_data.get('1h')), style=col_style),
         html.Div(format_change(percent_data.get('3h')), style=col_style),
         html.Div(format_change(percent_data.get('6h')), style=col_style),
         html.Div(format_change(percent_data.get('7d')), style=col_style),
         html.Div(format_change(percent_data.get('30d')), style=col_style),
-        html.Div(format_trade_value_display(trade_value_int), style=trade_value_style), # NY
+        html.Div(format_trade_value_display(trade_value_int), style=trade_value_style), 
     ]
 
     return html.Div(
@@ -868,18 +967,18 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
         
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
-            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås under 30m, 1h, 3h, 6h, 12h eller 24h:', style={'margin': '0 0 10px 0'}),
-            html.Div(style={'display': 'flex', 'gap': '30px'}, children=[
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller Handelsvärde:', style={'margin': '0 0 10px 0'}),
+            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap'}, children=[
                 html.Div([
-                    html.P('**Uppgångar (Högsta skickas):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0'}),
-                    html.Ul([html.Li(f'+{t}%') for t in ALERT_THRESHOLDS_UP[::-1]], style={'marginTop': '5px', 'paddingLeft': '20px'})
+                    html.P('**Prisrörelser (%):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0 0 5px 0'}),
+                    html.Ul([html.Li(f'+{t}%' if t > 0 else f'{t}%') for t in ALERT_THRESHOLDS_UP[::-1] + ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
                 ]),
                 html.Div([
-                    html.P('**Nedgångar (Lägsta skickas):**', style={'fontWeight': 'bold', 'color': '#dc3545', 'margin': '0'}),
-                    html.Ul([html.Li(f'{t}%') for t in ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px'})
-                ])
+                    html.P('**Handelsvärde (H.V.):**', style={'fontWeight': 'bold', 'color': '#006400', 'margin': '0 0 5px 0'}),
+                    html.Ul([html.Li(f'±{t}') for t in TRADE_VALUE_ALERTS], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
+                ]),
             ]),
-            html.P(f"Obs! Samma alert skickas max en gång per {ALERT_DEBOUNCE_SECONDS / 3600:.0f} timme.", style={'fontSize': '0.9em', 'color': '#6c757d', 'marginTop': '10px'}),
+            html.P(f"Obs! Samma alert skickas max en gång per {ALERT_DEBOUNCE_SECONDS / 3600:.0f} timme (Pris och H.V. har separata spärrar).", style={'fontSize': '0.9em', 'color': '#6c757d', 'marginTop': '10px'}),
             html.P(f"**Schemalagda sammanställningar skickas kl: {', '.join([f'{h:02d}:00' for h in SUMMARY_SCHEDULE_HOURS])} (CET/CEST)**", style={'fontSize': '0.9em', 'color': '#17a2b8', 'marginTop': '10px', 'fontWeight': 'bold'}),
         ]),
     ]),
@@ -976,7 +1075,7 @@ def update_all_live_data(n, coin_symbol, currency):
     else:
         summary_box = create_selected_coin_box(coin_label, coin_symbol, 0.0, currency, base_price_eur, None, None, percent_data, trade_value=trade_value)
         
-    # --- 2. Sammanfattningslista Beräkning och Sortering (NY LOGIK) ---
+    # --- 2. Sammanfattningslista Beräkning och Sortering ---
     summary_data = []
     
     for label in COINS_LABELS:
@@ -1012,7 +1111,12 @@ def update_all_live_data(n, coin_symbol, currency):
             elif currency == 'EUR':
                 price_in_base = price_eur
             elif base_price_eur is not None and base_price_eur != 0:
-                price_in_base = price_eur / base_price_eur
+                # Behöver baspriset för den aktuella valutan (coin_symbol_loop) i EUR för att konvertera till vald currency (t.ex. BTC)
+                base_currency_price_eur = data.get(f'{currency}/EUR')
+                if base_currency_price_eur is not None and base_currency_price_eur != 0:
+                    price_in_base = price_eur / base_currency_price_eur
+                else:
+                    price_in_base = None
 
         summary_data.append({
             'symbol': coin_symbol_loop,
@@ -1020,14 +1124,14 @@ def update_all_live_data(n, coin_symbol, currency):
             'price_eur': price_eur,
             'price_in_base': price_in_base, 
             'percent_data': percent_data_loop,
-            'trade_value_int': trade_value_int, # NY: Lägg till beräknat Handelsvärde
-            'sort_trade_value': sort_trade_value, # NY: Sorteringsnyckel
+            'trade_value_int': trade_value_int, 
+            'sort_trade_value': sort_trade_value, 
             'sort_30m': sort_key_30m, 
             'sort_1h': sort_key_1h, 
             'sort_6h': sort_key_6h 
         })
 
-    # NY SORTERING: Först Handelsvärde, sedan 30m, 1h, 6h
+    # Sortering: Först Handelsvärde, sedan 30m, 1h, 6h
     summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_30m'], x['sort_1h'], x['sort_6h']), reverse=True)
     
     header_style = {
@@ -1036,7 +1140,6 @@ def update_all_live_data(n, coin_symbol, currency):
         'marginBottom': '5px', 'color': '#495057', 'flexWrap': 'wrap', 'fontSize': '0.85em'
     }
     
-    # NY HEADER: Inkluderar Handelsvärde (H.V.)
     header_columns = [
         html.Div("Valuta", style={'flex': '0 0 160px', 'textAlign': 'left', 'paddingLeft': '5px'}),
         html.Div(f"Pris ({currency})", style={'flex': '0 0 100px', 'textAlign': 'right', 'paddingRight': '5px'}), 
@@ -1046,7 +1149,7 @@ def update_all_live_data(n, coin_symbol, currency):
         html.Div("6h", style={'flex': '1 1 10%', 'textAlign': 'right', 'padding': '0 5px'}),
         html.Div("7d", style={'flex': '1 1 10%', 'textAlign': 'right', 'padding': '0 5px'}),
         html.Div("30d", style={'flex': '1 1 10%', 'textAlign': 'right', 'padding': '0 5px'}),
-        html.Div("H.V.", style={'flex': '0 0 80px', 'textAlign': 'right', 'padding': '0 5px'}), # NY
+        html.Div("H.V.", style={'flex': '0 0 80px', 'textAlign': 'right', 'padding': '0 5px'}), 
     ]
     
     summary_header = html.Div(header_columns, style=header_style)
@@ -1059,7 +1162,7 @@ def update_all_live_data(n, coin_symbol, currency):
             label=item['label'],
             current_price=item['price_in_base'], 
             percent_data=item['percent_data'],
-            trade_value_int=item['trade_value_int'], # NY
+            trade_value_int=item['trade_value_int'], 
             currency=currency,
             is_selected=is_selected,
             eur_to_sek=eur_to_sek 

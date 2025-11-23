@@ -49,8 +49,8 @@ CRYPTO_PAIRS = {
 }
 
 CRYPTO_EMOJIS = {
-    'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳',
-    'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '🚀', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁',
+    'XRP': '⛌', 'BTC': '₿', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳',
+    'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '💊', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁',
     'WIF': '🐶', 'YFI': '🚜', 'BNB': '🟡', 'TRX': '🌐', 'PEPE': '🐸', 'LTC': '🥈',
     'TRUMP': '🦅', 'XTZ': '⚙️', 'DASH': '🪙', 'ZRO': '🔗', 'WOO': '🐻', 'GALA': '🎮',
     'SUI': '💧', 'BCH': '🌱', 'ATOM': '⚛️', 'AVAX': '🔺', 'ICP': '💻', 'ZEC': '🦓',
@@ -104,8 +104,8 @@ ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
-# --- ALERT-TRÖSKLAR FÖR H.V. (UPPDATERAD) ---
-TRADE_VALUE_ALERTS = sorted([15, 25, 40, 60], reverse=True) # NYA VÄRDEN: +15, +25, +40, +60
+# --- ALERT-TRÖSKLAR FÖR H.V. ---
+TRADE_VALUE_ALERTS = sorted([15, 25, 40, 60], reverse=True) 
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]
@@ -253,11 +253,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             'sort_24h': sort_key_24h
         })
 
-    # NY SORTERING ÄR INTE NÖDVÄNDIG HÄR, DEN SKER I CALLBACKEN
-    # summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
-    
-    # För Telegram sorteras den enkelt efter H.V. (numeriskt) och sedan 3h/24h.
-    # Detta ger: Positiva, Noll, Negativa. Detta är standard för Telegram-summaries.
+    # Standard Telegram-sortering (H.V., 3h, 24h)
     summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
@@ -501,7 +497,7 @@ def background_data_fetch(redis_instance):
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 if ohlc_5min_data:
-                     redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
+                     redis_instance.set(f'OHLC_CACHED_{ohlc_interval}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
 
                 periods_ago_30d = 2592000 
                 ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
@@ -588,7 +584,7 @@ if r:
 app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
 
-# --- NY FUNKTION: create_summary_row ---
+# --- FUNKTIONER FÖR ATT SKAPA UI-KOMPONENTER ---
 def create_summary_row(symbol, label, price, percent_data, trade_value, currency, is_selected, eur_to_sek):
     row_style = {'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '5px 0', 'borderBottom': '1px solid #eee', 'fontSize': '0.85em', 'cursor': 'pointer', 'backgroundColor': '#fff'}
     if is_selected:
@@ -613,7 +609,7 @@ def create_summary_row(symbol, label, price, percent_data, trade_value, currency
     ]
 
     return html.Div(cols, id={'type': 'summary-card', 'index': symbol}, style=row_style)
-# --- SLUT NY FUNKTION ---
+# --- SLUT FUNKTIONER ---
 
 def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None): 
     if individual_trends is None: individual_trends = {}
@@ -644,7 +640,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
                         children=[html.Span(f"{period}:", style={'color': '#6c757d', 'flex': '0 0 40px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
     
-    # NY FUNKTION: Visar Hx och Tx i parentes
+    # Visar Hx och Tx i parentes
     def create_trend_display_list(trend_keys):
         trend_list = []
         
@@ -690,7 +686,6 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
                  ]))
 
         return trend_list
-    # SLUT NY FUNKTION
 
     short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
     long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
@@ -706,7 +701,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             # Detta är en approximation av diff i bas-krypton
             diff_24h_base = diff_24h_eur / base_price_eur 
 
-    # --- NY, KOMPAKT LAYOUT ---
+    # --- KOMPAKT LAYOUT ---
     
     # Pris/Diff-sektion (Huvudfokus)
     main_price_section = html.Div(style={'flex': '1 1 300px', 'minWidth': '300px', 'paddingRight': '15px'}, children=[
@@ -842,7 +837,6 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                 ]),
                 html.Div([
                     html.P('**Handelsvärde (H.V.) (Endast Positiv):**', style={'fontWeight': 'bold', 'color': '#006400', 'margin': '0 0 5px 0'}),
-                    # Här visas de nya trösklarna: +15, +25, +40, +60
                     html.Ul([html.Li(f'+{t}') for t in TRADE_VALUE_ALERTS], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'}) 
                 ]),
             ]),
@@ -852,34 +846,6 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     ]),
     dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
 ])
-
-# --- FUNKTION FÖR NY SORTERING AV SAMMANFATTNINGS-DATAN ---
-def get_summary_sort_key(item):
-    tv = item.get('trade_value')
-    
-    # 1. H.V. Grouping: Positive (1), Zero (0), Negative (-1), N/A (-2)
-    if tv is None:
-        group_key = -2
-    elif tv > 0:
-        group_key = 1
-    elif tv == 0:
-        group_key = 0 # Detta flyttar 0 till att sorteras efter positiva och före negativa.
-    else: # tv < 0
-        group_key = -1
-        
-    # 2. Magnitude Key: H.V. value (används för att sortera inom grupperna)
-    magnitude_key = tv if tv is not None else -float('inf')
-    
-    # 3. Secondary Percentage Keys
-    # Använder 30m, 1h, 6h som sekundära sorteringskriterier
-    s30 = item['percent'].get('30m', -float('inf'))
-    s1h = item['percent'].get('1h', -float('inf'))
-    s6h = item['percent'].get('6h', -float('inf'))
-    
-    # Sort by (Group Key DESC, Magnitude Key DESC, s30 DESC, s1h DESC, s6h DESC)
-    return (group_key, magnitude_key, s30, s1h, s6h) 
-# --- SLUT SORTERINGS-FUNKTION ---
-
 
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
@@ -968,8 +934,21 @@ def update_all_live_data(n, coin_symbol, currency):
 
         summary_data.append({'symbol': sl, 'label': label, 'price': pb, 'percent': pd, 'trade_value': tv_int})
 
-    # ANVÄND NY SORTERINGS-FUNKTION FÖR ATT HANTERA N.V.=0
-    summary_data.sort(key=get_summary_sort_key, reverse=True)
+    # --- NY SORTERINGSLOGIK: 24h, 3h, H.V. (alla fallande) ---
+    def get_new_sort_key(item):
+        pd = item['percent']
+        tv = item['trade_value']
+        
+        # Använder -float('inf') för att skicka N/A till slutet av en fallande sortering
+        s24h = pd.get('24h', -float('inf')) 
+        s3h = pd.get('3h', -float('inf'))
+        s_tv = tv if tv is not None else -float('inf')
+        
+        # (24h-förändring, 3h-förändring, Handelsvärde)
+        return (s24h, s3h, s_tv)
+
+    summary_data.sort(key=get_new_sort_key, reverse=True)
+    # --- SLUT NY SORTERINGSLOGIK ---
     
     # --- UPPDATERAT TABELLHUVUD ---
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
@@ -1033,7 +1012,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     figure.update_layout(title=f"Prisutveckling: {coin_label}", template="plotly_white", height=500, hovermode="x unified")
     return figure
 
-# --- NY CALLBACK FÖR ATT HANTERA KLICK I LISTAN OCH INITIERING ---
+# --- CALLBACK FÖR ATT HANTERA KLICK I LISTAN OCH INITIERING ---
 @app.callback(
     Output('coin-dropdown', 'value'),
     [Input({'type': 'summary-card', 'index': ALL}, 'n_clicks'),

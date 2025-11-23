@@ -88,15 +88,15 @@ TIME_WINDOWS = {
     '30d': {'blocks': 30, 'interval': 1440},
 }
 
-# Konfiguration för Trendlinjer och H.V. beräkning
+# Konfiguration för Trendlinjer och H.V. beräkning (Uppdaterad Viktning)
 TREND_WINDOWS = {
-    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 3, 'source': '1day', 'show_line': False},
-    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 2, 'source': '1day', 'show_line': False},
+    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3,   'source': '5min', 'show_line': True},
+    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3,   'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3,   'source': '5min', 'show_line': True},
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 4,   'source': '5min', 'show_line': True}, # Ändrat till x4
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 5,   'source': '5min', 'show_line': True}, # Ändrat till x5
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.5, 'source': '1day', 'show_line': False}, # Ändrat till x0.5
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.2, 'source': '1day', 'show_line': False}, # Ändrat till x0.2
 }
 
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
@@ -369,6 +369,7 @@ def calculate_percentage_changes(ohlc_data, current_price, periods):
         if period not in TIME_WINDOWS: continue
         blocks = config['blocks']
         if len(ohlc_data) >= blocks:
+            # -blocks indexera bakåt för referenspriset.
             reference_price = ohlc_data[-blocks]['price']
             if reference_price > 0:
                 changes[period] = ((current_price - reference_price) / reference_price) * 100
@@ -605,7 +606,7 @@ def create_summary_row(symbol, label, price, percent_data, trade_value, currency
         html.Div(format_change(percent_data.get('1h')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('3h')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('6h')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), # <-- NYTT FÄLT
+        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('7d')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('30d')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 80px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}),
@@ -639,7 +640,8 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         high_display = high_eur * multiplier
         low_display = low_eur * multiplier
 
-    periods_col1, periods_col2 = ['30m', '1h', '3h'], ['6h', '12h', '18h'] 
+    # UPPDATERAD LISTA MED 7D OCH 30D
+    periods_col1, periods_col2 = ['30m', '1h', '3h', '7d'], ['6h', '12h', '18h', '30d'] 
 
     def create_change_row(period, value):
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
@@ -711,7 +713,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             ]),
         ]),
         
-        # Prisrörelser
+        # Prisrörelser (Nu med 7d och 30d)
         html.Div(style={'paddingTop': '10px', 'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px 10px'}, children=[
             create_change_row(p, format_change(percent_data.get(p))) for p in periods_col1 + periods_col2
         ])
@@ -766,7 +768,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                  html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px', 'fontSize': '0.9em'}),
                  dcc.Checklist(
                      id='trendline-checkboxes',
-                     # FILTRERAR BORT 7D OCH 30D
+                     # FILTRERAR BORT 7D OCH 30D (som inte visas på 5min-grafen)
                      options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items() if config.get('show_line')],
                      value=[k for k, v in TREND_WINDOWS.items() if v.get('show_line')], 
                      inline=True,
@@ -823,7 +825,7 @@ def update_all_live_data(n, coin_symbol, currency):
     local_timestamp = timestamp + 3600 
     updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
     current_price_eur = data.get(f'{coin_symbol}/EUR')
-    diff_24h_eur = data.get(f'{coin_symbol}/DIFF_24H_EUR') # <-- Hämta 24h diff i EUR
+    diff_24h_eur = data.get(f'{coin_symbol}/DIFF_24H_EUR') 
     base_price_eur = 1.0 
 
     if currency == 'SEK':
@@ -890,7 +892,7 @@ def update_all_live_data(n, coin_symbol, currency):
 
     summary_data.sort(key=lambda x: (x['sort_tv'], x['s30'], x['s1h'], x['s6h']), reverse=True)
     
-    # --- UPPDATERAT TABELLHUVUD FÖR ATT INKLUDERA 24H ---
+    # --- UPPDATERAT TABELLHUVUD ---
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
     header_cols = [
         html.Div("Valuta", style={'flex': '0 0 160px', 'paddingLeft': '5px'}), 
@@ -899,7 +901,7 @@ def update_all_live_data(n, coin_symbol, currency):
         html.Div("1h", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("3h", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("6h", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("24h", style={'flex': '1', 'textAlign': 'right'}), # <-- NY KOLUMN
+        html.Div("24h", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("7d", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("30d", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("H.V.", style={'flex': '0 0 80px', 'textAlign': 'right', 'paddingRight': '5px'})

@@ -1296,6 +1296,21 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
 
     return figure
 
+# --- LÄGG TILL DENNA CALLBACK FÖR ATT LÖSA FELET ---
+@app.callback(
+    Output('coin-dropdown', 'value'),
+    Input('initial-coin-symbol-store', 'data')
+)
+def sync_dropdown_on_load(stored_value):
+    """
+    Fixar KeyError: Callback function not found for output 'coin-dropdown.value'.
+    Säkerställer att dropdownen har en definierad Output-callback.
+    """
+    # Om inget värde finns i store, gör inget (behåll default)
+    if not stored_value:
+        return dash.no_update
+    return stored_value
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8050))
     app.run_server(debug=False, host='0.0.0.0', port=port)

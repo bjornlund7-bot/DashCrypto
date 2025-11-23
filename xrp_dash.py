@@ -168,6 +168,7 @@ def format_trade_value_telegram(v):
 def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     """
     Formaterar den sorterade listan av kryptovalutor till ett läsbart Telegram-meddelande.
+    UPPDATERAD: Visar Krypto | Pris EUR | 3h | 24h | H.V.
     """
     summary_data = []
     
@@ -195,12 +196,11 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             if trade_value is not None:
                 trade_value_int = int(round(trade_value))
 
-        sort_key_30m = percent_data_loop.get('30m') if percent_data_loop.get('30m') is not None else -float('inf')
-        sort_key_1h = percent_data_loop.get('1h') if percent_data_loop.get('1h') is not None else -float('inf')
-        sort_key_6h = percent_data_loop.get('6h') if percent_data_loop.get('6h') is not None else -float('inf')
+        # Hämta värden för sortering (3h och 24h)
+        sort_key_3h = percent_data_loop.get('3h') if percent_data_loop.get('3h') is not None else -float('inf')
+        sort_key_24h = percent_data_loop.get('24h') if percent_data_loop.get('24h') is not None else -float('inf')
         
         sort_trade_value = trade_value_int if trade_value_int is not None else -float('inf')
-
 
         summary_data.append({
             'symbol': coin_symbol_loop,
@@ -208,13 +208,12 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             'percent_data': percent_data_loop,
             'trade_value_int': trade_value_int, 
             'sort_trade_value': sort_trade_value, 
-            'sort_30m': sort_key_30m,
-            'sort_1h': sort_key_1h,
-            'sort_6h': sort_key_6h
+            'sort_3h': sort_key_3h,
+            'sort_24h': sort_key_24h
         })
 
-    # NY SORTERING: Prioriterar Handelsvärde, sedan 30m, 1h, 6h
-    summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_30m'], x['sort_1h'], x['sort_6h']), reverse=True)
+    # NY SORTERING: Prioriterar Handelsvärde, sedan 3h, sist 24h
+    summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
     # Justera tidszon för CET/CEST 
@@ -227,10 +226,11 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         f"Sorterad efter Handelsvärde (Vägt genomsnitt av trendavvikelse)."
     )
     
+    # Uppdaterad tabell-header för att matcha kolumnerna
     table_header = (
         "```"
-        "VALUTA | PRIS EUR | 30M |  1H  |  6H | H.V.\n"
-        "--------------------------------------------\n"
+        "KRYPTO | PRIS EUR |  3H   |  24H  | H.V.\n"
+        "-----------------------------------------\n"
     )
     
     table_rows = []
@@ -240,13 +240,14 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         price_str = format_price_telegram(item['price_eur'])
         price_display = price_str.rjust(8) 
 
-        change_30m = format_change_telegram(item['percent_data'].get('30m'))
-        change_1h = format_change_telegram(item['percent_data'].get('1h'))
-        change_6h = format_change_telegram(item['percent_data'].get('6h'))
+        # Hämtar 3h och 24h förändring
+        change_3h = format_change_telegram(item['percent_data'].get('3h'))
+        change_24h = format_change_telegram(item['percent_data'].get('24h'))
         
         trade_value_str = format_trade_value_telegram(item['trade_value_int']) 
         
-        row = f"{symbol} | {price_display} | {change_30m} |{change_1h} |{change_6h} |{trade_value_str}"
+        # Bygger raden med nya kolumner
+        row = f"{symbol} | {price_display} |{change_3h} |{change_24h} |{trade_value_str}"
         table_rows.append(row)
 
     table_body = "\n".join(table_rows)

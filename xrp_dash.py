@@ -184,6 +184,7 @@ def calculate_trade_value(short_term_data, current_price_eur, long_term_data=Non
             historical_data = long_term_data
             
         if not historical_data:
+            individual_trends[key] = None
             continue
         
         data_segment = historical_data[-blocks:] 
@@ -254,8 +255,16 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
-    timezone_offset_hours = 1 if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()) or (now_utc.month == 10 and now_utc.day <= 31) else 1
-    now_local = now_utc + timedelta(hours=timezone_offset_hours)
+    # Justera offset till sommar/vintertid
+    offset = 1 # Grund offset för CET
+    if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()): # Förenklad DST-kontroll (mars till oktober)
+        offset = 2 # CEST
+    elif now_utc.month == 10 and now_utc.day <= 31 and now_utc.weekday() == 6 and now_utc.hour >= 2: # Sista söndagen i oktober
+        offset = 1 
+    elif now_utc.month == 3 and now_utc.day > 24 and now_utc.weekday() == 6 and now_utc.hour >= 2: # Sista söndagen i mars
+        offset = 2
+    
+    now_local = now_utc + timedelta(hours=offset)
     
     header = (
         f"🌟 **MARKNADSSAMMANFATTNING** 🌟\n"
@@ -320,7 +329,13 @@ def fetch_crypto_data():
             if coin_info is None: continue
             try:
                 price_eur = float(coin_info['c'][0])
+                # Lägg till 24h-förändring i EUR för huvudboxen
+                price_yesterday_eur = float(coin_info['o']) 
+                diff_24h_eur = price_eur - price_yesterday_eur
+                
                 current_data[f'{coin_symbol}/EUR'] = price_eur
+                current_data[f'{coin_symbol}/DIFF_24H_EUR'] = diff_24h_eur
+                
             except (ValueError, IndexError, TypeError) as e:
                 logger.warning(f"Failed to parse Ticker data for {ticker}: {e}")
             
@@ -540,7 +555,10 @@ def background_summary_sender(redis_instance):
     while True:
         try:
             now_utc = datetime.now(timezone.utc)
-            timezone_offset_hours = 1 if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()) or (now_utc.month == 10 and now_utc.day <= 31) else 1
+            timezone_offset_hours = 1 # Grund offset för CET
+            if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()):
+                timezone_offset_hours = 2 # CEST
+            
             now_local = now_utc + timedelta(hours=timezone_offset_hours)
             
             if now_local.hour in SUMMARY_SCHEDULE_HOURS and now_local.minute == 0:
@@ -564,8 +582,34 @@ if r:
 app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
 
-# --- MODIFIERAD FUNKTION: Lagt till individual_trends parameter och kolumn ---
-def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None): 
+# --- NY FUNKTION: create_summary_row (LÖSER NameError) ---
+def create_summary_row(symbol, label, price, percent_data, trade_value, currency, is_selected, eur_to_sek):
+    row_style = {'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '5px 0', 'borderBottom': '1px solid #eee', 'fontSize': '0.85em', 'cursor': 'pointer', 'backgroundColor': '#fff'}
+    if is_selected:
+        row_style['backgroundColor'] = '#e6f7ff'
+        row_style['border'] = '1px solid #0056b3'
+    
+    # Pris i basvaluta
+    price_div = format_price_color_summary(price, percent_data.get('24h'))
+    
+    # Skapa DIV:ar för varje kolumn
+    cols = [
+        html.Div(html.Span(f"{CRYPTO_EMOJIS.get(symbol, '')} {label}", style={'fontWeight': 'bold', 'color': '#0056b3' if is_selected else '#495057'}), style={'flex': '0 0 160px', 'paddingLeft': '5px'}),
+        price_div, 
+        html.Div(format_change(percent_data.get('30m')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('1h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('3h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('6h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), # <-- NYTT FÄLT
+        html.Div(format_change(percent_data.get('7d')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('30d')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 80px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}),
+    ]
+
+    return html.Div(cols, id={'type': 'summary-card', 'index': symbol}, style=row_style)
+# --- SLUT NY FUNKTION ---
+
+def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None): 
     if individual_trends is None: individual_trends = {}
         
     price_text = f"{format_price_display(price)} {currency}"
@@ -580,7 +624,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         high_display = high_eur * multiplier if currency != 'EUR' and currency != 'SEK' else high_eur * multiplier if currency == 'SEK' else high_eur
         low_display = low_eur * multiplier if currency != 'EUR' and currency != 'SEK' else low_eur * multiplier if currency == 'SEK' else low_eur
 
-    periods_col1, periods_col2 = ['30m', '1h', '3h'], ['6h', '24h', '7d', '30d'] 
+    periods_col1, periods_col2 = ['30m', '1h', '3h'], ['6h', '12h', '18h'] 
 
     def create_change_display(period):
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
@@ -598,11 +642,22 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
     short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
     long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
 
+    # Beräkna 24h diff för huvudboxen (endast om valutan är EUR eller SEK)
+    diff_text = ""
+    if currency == 'EUR' and diff_24h_eur is not None:
+        diff_text = f" ({'+' if diff_24h_eur >= 0 else ''}{diff_24h_eur:,.4f} EUR, {format_change(change_24h)})"
+    elif currency == 'SEK' and diff_24h_eur is not None:
+        sek_diff = diff_24h_eur * (base_price_eur if base_price_eur else 1.0)
+        diff_text = f" ({'+' if sek_diff >= 0 else ''}{sek_diff:,.4f} SEK, {format_change(change_24h)})"
+        
     col1 = html.Div(style={'flex': '1 1 25%', 'minWidth': '180px', 'paddingRight': '15px', 'borderRight': '1px solid #dee2e6'}, children=[
             html.H2(html.Span([html.Span(f"{coin_emoji} ", style={'marginRight': '5px'}), f"{label} ({symbol})"]), style={'fontSize': '1.5em', 'color': '#0056b3', 'marginBottom': '5px', 'textAlign': 'center'}),
             html.Div(style={'textAlign': 'center', 'marginTop': '10px'}, children=[
                 html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.9em'}),
-                html.P(price_text, id='current-price-display', style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'})
+                html.P([
+                    html.Span(price_text, id='current-price-display', style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'}),
+                    html.P(diff_text, style={'fontSize': '0.8em', 'fontWeight': '600', 'color': price_color, 'margin': '0'}) # <-- NY INFO
+                ]),
             ]),
             html.Div(style={'textAlign': 'center', 'marginTop': '10px', 'padding': '5px 0', 'borderTop': '1px solid #dee2e6'}, children=[
                 html.P("Handelsvärde (Viktad Trendindikator)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.8em'}),
@@ -626,7 +681,6 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             ])
         ])
     
-    # --- NY KOLUMN FÖR INDIVIDUELLA TRENDVÄRDEN (Hₓ) ---
     col4 = html.Div(style={'flex': '1 1 25%', 'minWidth': '180px', 'paddingLeft': '15px'}, children=[
         html.P("Trendvärden (Hₓ)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
@@ -720,7 +774,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
 def update_all_live_data(n, coin_symbol, currency):
     data = get_data_from_redis()
     if data is None or 'EUR_SEK_RATE' not in data:
-        loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, None, None, {}, None, {})
+        loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, None, None, {}, None, {}, None)
         return loading_box, "Väntar...", None, currency, html.Div("Laddar...")
 
     eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
@@ -729,6 +783,7 @@ def update_all_live_data(n, coin_symbol, currency):
     local_timestamp = timestamp + 3600 
     updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
     current_price_eur = data.get(f'{coin_symbol}/EUR')
+    diff_24h_eur = data.get(f'{coin_symbol}/DIFF_24H_EUR') # <-- Hämta 24h diff i EUR
     base_price_eur = 1.0 
 
     if currency == 'SEK':
@@ -752,7 +807,6 @@ def update_all_live_data(n, coin_symbol, currency):
         hist_5min_curr = hist_data_5min + [{'time': timestamp, 'price': current_price_eur}]
         hist_1day_curr = hist_data_1day + [{'time': timestamp, 'price': current_price_eur}]
         
-        # Använd den modifierade funktionen
         trade_value, individual_trends = calculate_trade_value(hist_5min_curr, current_price_eur, hist_1day_curr)
         
         prices_eur = [item['price'] for item in hist_5min_curr]
@@ -765,14 +819,14 @@ def update_all_live_data(n, coin_symbol, currency):
             'base_price_eur': base_price_eur, 
             'coin_symbol': coin_symbol, 
             'trade_value': trade_value,
-            'individual_trends': individual_trends # <-- NYTT VÄRDE
+            'individual_trends': individual_trends 
         }
 
     percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol, {})
     range_data = data.get('ALL_24H_RANGE_OHLC', {}).get(coin_symbol, {})
     
-    # Skicka med de individuella trendvärdena till boxen
-    summary_box = create_selected_coin_box(coin_label, coin_symbol, current_price_base or 0.0, currency, base_price_eur, range_data.get('high_eur'), range_data.get('low_eur'), percent_data, trade_value, individual_trends)
+    # Skicka med de individuella trendvärdena och 24h diff till boxen
+    summary_box = create_selected_coin_box(coin_label, coin_symbol, current_price_base or 0.0, currency, base_price_eur, range_data.get('high_eur'), range_data.get('low_eur'), percent_data, trade_value, individual_trends, diff_24h_eur)
         
     summary_data = []
     for label in COINS_LABELS:
@@ -785,7 +839,6 @@ def update_all_live_data(n, coin_symbol, currency):
         
         tv_int = None
         if h5 and pe:
-            # Använd modifierad funktion, ta bara det totala värdet
             tv_val, _ = calculate_trade_value(h5 + [{'time': timestamp, 'price': pe}], pe, h1 + [{'time': timestamp, 'price': pe}])
             if tv_val is not None: tv_int = int(round(tv_val))
         
@@ -797,8 +850,20 @@ def update_all_live_data(n, coin_symbol, currency):
 
     summary_data.sort(key=lambda x: (x['sort_tv'], x['s30'], x['s1h'], x['s6h']), reverse=True)
     
+    # --- UPPDATERAT TABELLHUVUD FÖR ATT INKLUDERA 24H ---
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
-    header_cols = [html.Div("Valuta", style={'flex': '0 0 160px', 'paddingLeft': '5px'}), html.Div(f"Pris ({currency})", style={'flex': '0 0 100px', 'textAlign': 'right'}), html.Div("30m", style={'flex': '1', 'textAlign': 'right'}), html.Div("1h", style={'flex': '1', 'textAlign': 'right'}), html.Div("3h", style={'flex': '1', 'textAlign': 'right'}), html.Div("6h", style={'flex': '1', 'textAlign': 'right'}), html.Div("7d", style={'flex': '1', 'textAlign': 'right'}), html.Div("30d", style={'flex': '1', 'textAlign': 'right'}), html.Div("H.V.", style={'flex': '0 0 80px', 'textAlign': 'right', 'paddingRight': '5px'})]
+    header_cols = [
+        html.Div("Valuta", style={'flex': '0 0 160px', 'paddingLeft': '5px'}), 
+        html.Div(f"Pris ({currency})", style={'flex': '0 0 100px', 'textAlign': 'right'}), 
+        html.Div("30m", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("1h", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("3h", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("6h", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("24h", style={'flex': '1', 'textAlign': 'right'}), # <-- NY KOLUMN
+        html.Div("7d", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("30d", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("H.V.", style={'flex': '0 0 80px', 'textAlign': 'right', 'paddingRight': '5px'})
+    ]
     
     rows = [create_summary_row(item['symbol'], item['label'], item['price'], item['percent'], item['trade_value'], currency, item['symbol'] == coin_symbol, eur_to_sek) for item in summary_data]
     return summary_box, updated_text, chart_data_store, currency, html.Div([html.Div(header_cols, style=header_style)] + rows)
@@ -859,9 +924,7 @@ def update_dropdown_selection(n_clicks, initial_coin, ids):
     if not trigger or trigger == 'initial-coin-symbol-store':
         return initial_coin if initial_coin else dash.no_update
     
-    # Om trigger är en dict (vilket det är för pattern matching IDn)
     if isinstance(trigger, dict) and trigger.get('type') == 'summary-card':
-         # Kontrollera att det var ett faktiskt klick (inte initialisering)
          if not any(n_clicks): return dash.no_update
          return trigger['index']
          

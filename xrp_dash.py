@@ -83,6 +83,7 @@ TIME_WINDOWS = {
     '3h': {'blocks': 36, 'interval': OHLC_CACHE_INTERVAL_MIN},  
     '6h': {'blocks': 72, 'interval': OHLC_CACHE_INTERVAL_MIN}, 
     '12h': {'blocks': 144, 'interval': OHLC_CACHE_INTERVAL_MIN}, 
+    '18h': {'blocks': 216, 'interval': OHLC_CACHE_INTERVAL_MIN}, # NYTT FÖNSTER (18h * 12 punkter/h = 216 blocks)
     '24h': {'blocks': 288, 'interval': OHLC_CACHE_INTERVAL_MIN},
     '7d': {'blocks': 7, 'interval': 1440},  
     '30d': {'blocks': 30, 'interval': 1440}, 
@@ -93,14 +94,16 @@ TREND_WINDOWS = {
     '3h': {'blocks': 36, 'color': '#2ca02c', 'name': 'Trend (3h)', 'weight': 7}, 
     '6h': {'blocks': 72, 'color': '#d62728', 'name': 'Trend (6h)', 'weight': 5}, 
     '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3}, 
+    '18h': {'blocks': 216, 'color': '#17becf', 'name': 'Trend (18h)', 'weight': 5}, # NY TREND OCH VIKT
 }
+
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
 ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75]) 
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
-# Tröskelvärden för Handelsvärde alerts (Endast positiva används i alert-logiken)
-TRADE_VALUE_ALERTS = sorted([10, 20, 30, 50], reverse=True) 
+# Nya tröskelvärden för Handelsvärde alerts
+TRADE_VALUE_ALERTS = sorted([25, 50, 75, 100], reverse=True) 
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]
@@ -191,6 +194,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             historical_data_with_current = historical_data.copy()
             historical_data_with_current.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
             
+            # calculate_trade_value använder nu den nya 18h trenden
             trade_value = calculate_trade_value(historical_data_with_current, price_eur)
             if trade_value is not None:
                 trade_value_int = int(round(trade_value))
@@ -381,6 +385,7 @@ def calculate_trade_value(historical_data, current_price_eur):
     V = current_price_eur
     trade_value = 0.0
     
+    # TREND_WINDOWS innehåller nu 18h med vikt 5
     for key, config in TREND_WINDOWS.items():
         blocks = config['blocks']
         weight = config['weight']
@@ -503,7 +508,7 @@ def background_data_fetch(redis_instance):
                 if current_price_eur is None:
                     continue
                     
-                # a. Hämta 5-min OHLC (24h historik)
+                # a. Hämta 5-min OHLC (24h historik, vilket täcker 18h trenden)
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 
@@ -515,7 +520,7 @@ def background_data_fetch(redis_instance):
                         min_ohlc = min(prices_eur)
                         all_24h_range_ohlc[coin_symbol] = {'high_eur': max_ohlc, 'low_eur': min_ohlc}
                     
-                    # Beräkna Handelsvärdet (Behöver aktuellt pris som sista punkt)
+                    # Beräkna Handelsvärdet (calculate_trade_value använder nu den nya 18h trenden)
                     historical_data_with_current = ohlc_5min_data.copy()
                     historical_data_with_current.append({'time': new_data.get('timestamp', time.time()), 'price': current_price_eur})
                     trade_value = calculate_trade_value(historical_data_with_current, current_price_eur)
@@ -526,6 +531,7 @@ def background_data_fetch(redis_instance):
                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
                          
+                    # Inkluderar 18h i short_term_periods
                     short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
                     percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
                 else:
@@ -579,7 +585,7 @@ def background_data_fetch(redis_instance):
 
 def check_and_send_trade_value_alerts(alert_data, r_instance):
     """
-    UPPDATERAD FUNKTION: Kontrollerar och skickar alerts baserat på Handelsvärdet.
+    Kontrollerar och skickar alerts baserat på Handelsvärdet.
     Endast positiva H.V. alerts skickas.
     """
     if not r_instance:
@@ -598,6 +604,7 @@ def check_and_send_trade_value_alerts(alert_data, r_instance):
         # --- Endast Positivt Handelsvärde ---
         if trade_value > 0:
             highest_threshold_met = None
+            # TRADE_VALUE_ALERTS är nu [100, 75, 50, 25]
             for threshold in TRADE_VALUE_ALERTS:
                 if trade_value >= threshold:
                     highest_threshold_met = threshold
@@ -774,7 +781,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
     # ---------------------------------------------
     
     periods_col1 = ['30m', '1h', '3h'] 
-    periods_col2 = ['6h', '24h', '7d', '30d'] 
+    periods_col2 = ['6h', '12h', '18h', '24h', '7d', '30d'] # 18h är tillagd här
 
     def create_change_display(period):
         return html.Div(
@@ -817,22 +824,28 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         ]
     )
 
+    col3_periods = periods_col1 + periods_col2
+    
+    col3_children = []
+    
+    # Dela upp kolumn 3 i två sub-kolumner
+    col3_children.append(html.Div(
+        style={'flex': '1 1 45%', 'minWidth': '100px'},
+        children=[create_change_display(p) for p in periods_col1]
+    ))
+    col3_children.append(html.Div(
+        style={'flex': '1 1 45%', 'minWidth': '100px'},
+        children=[create_change_display(p) for p in periods_col2]
+    ))
+
+
     col3 = html.Div(
         style={'flex': '1 1 45%', 'minWidth': '250px', 'paddingLeft': '15px'},
         children=[
             html.P("Prisrörelser (%)", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
             html.Div(
                 style={'display': 'flex', 'justifyContent': 'space-around', 'gap': '10px'},
-                children=[
-                    html.Div(
-                        style={'flex': '1 1 45%', 'minWidth': '100px'},
-                        children=[create_change_display(p) for p in periods_col1]
-                    ),
-                    html.Div(
-                        style={'flex': '1 1 45%', 'minWidth': '100px'},
-                        children=[create_change_display(p) for p in periods_col2]
-                    ),
-                ]
+                children=col3_children
             )
         ]
     )
@@ -931,6 +944,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                  html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px', 'fontSize': '0.9em'}),
                  dcc.Checklist(
                      id='trendline-checkboxes',
+                     # 18h trenden är nu med i listan
                      options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items()],
                      value=list(TREND_WINDOWS.keys()), 
                      inline=True,
@@ -955,6 +969,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                 ]),
                 html.Div([
                     html.P('**Handelsvärde (H.V.) (Endast Positiv):**', style={'fontWeight': 'bold', 'color': '#006400', 'margin': '0 0 5px 0'}),
+                    # Nya trösklar: +25, +50, +75, +100
                     html.Ul([html.Li(f'+{t}') for t in TRADE_VALUE_ALERTS], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'}) 
                 ]),
             ]),
@@ -1021,6 +1036,7 @@ def update_all_live_data(n, coin_symbol, currency):
         historical_data_with_current = historical_data.copy()
         historical_data_with_current.append({'time': timestamp, 'price': current_price_eur})
         
+        # calculate_trade_value använder nu den nya 18h trenden
         trade_value = calculate_trade_value(historical_data_with_current, current_price_eur)
         
         prices_eur = [item['price'] for item in historical_data_with_current]
@@ -1198,6 +1214,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"OHLC Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
     if low_24h_display: figure.add_hline(y=low_24h_display, line_dash="dot", line_color="red", annotation_text=f"OHLC Lägsta: {format_price_display(low_24h_display)} {currency}", annotation_position="bottom right")
 
+    # Inkluderar nu 18h trenden
     for trend_key, config in TREND_WINDOWS.items():
         if trend_key in selected_trends: 
             blocks = config['blocks']

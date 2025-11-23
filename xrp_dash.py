@@ -93,10 +93,10 @@ TREND_WINDOWS = {
     '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3,   'source': '5min', 'show_line': True},
     '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3,   'source': '5min', 'show_line': True},
     '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3,   'source': '5min', 'show_line': True},
-    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 4,   'source': '5min', 'show_line': True}, # Ändrat till x4
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 5,   'source': '5min', 'show_line': True}, # Ändrat till x5
-    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.5, 'source': '1day', 'show_line': False}, # Ändrat till x0.5
-    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.2, 'source': '1day', 'show_line': False}, # Ändrat till x0.2
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3,   'source': '5min', 'show_line': True}, # Ändrat till x3
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2,   'source': '5min', 'show_line': True}, # Ändrat till x2
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.6, 'source': '1day', 'show_line': False}, # Ändrat till x0.6
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.4, 'source': '1day', 'show_line': False}, # Ändrat till x0.4
 }
 
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
@@ -183,13 +183,13 @@ def calculate_trade_value(short_term_data, current_price_eur, long_term_data=Non
             historical_data = long_term_data
             
         if not historical_data:
-            individual_trends[key] = None
+            individual_trends[key] = {'Hx': None, 'Tx_eur': None}
             continue
         
         data_segment = historical_data[-blocks:] 
         
         if len(data_segment) < blocks:
-            individual_trends[key] = None
+            individual_trends[key] = {'Hx': None, 'Tx_eur': None}
             continue 
 
         x_values = np.arange(blocks) 
@@ -201,9 +201,11 @@ def calculate_trade_value(short_term_data, current_price_eur, long_term_data=Non
         if V is not None and V != 0:
             Hx = (((Tx - V) / V) * 100) * weight
             trade_value += Hx
-            individual_trends[key] = Hx # Lagra individuellt värde
+            # UPPDATERAD: Lagra både Hx och Tx i EUR
+            individual_trends[key] = {'Hx': Hx, 'Tx_eur': Tx} 
         else:
-            individual_trends[key] = None
+            # Om priset är noll eller saknas, sätt Hx till None, men Tx kan ändå visas
+            individual_trends[key] = {'Hx': None, 'Tx_eur': Tx}
 
     return trade_value if trade_value is not None else None, individual_trends # Returnerar nu en tuple
 
@@ -588,7 +590,7 @@ if r:
 app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
 
-# --- NY FUNKTION: create_summary_row (LÖSER NameError) ---
+# --- NY FUNKTION: create_summary_row ---
 def create_summary_row(symbol, label, price, percent_data, trade_value, currency, is_selected, eur_to_sek):
     row_style = {'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '5px 0', 'borderBottom': '1px solid #eee', 'fontSize': '0.85em', 'cursor': 'pointer', 'backgroundColor': '#fff'}
     if is_selected:
@@ -640,22 +642,58 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         high_display = high_eur * multiplier
         low_display = low_eur * multiplier
 
-    # UPPDATERAD LISTA MED 7D OCH 30D
-    periods_col1, periods_col2 = ['30m', '1h', '3h', '7d'], ['6h', '12h', '18h', '30d'] 
-
     def create_change_row(period, value):
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
                         children=[html.Span(f"{period}:", style={'color': '#6c757d', 'flex': '0 0 40px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
     
+    # NY FUNKTION: Visar Hx och Tx i parentes
     def create_trend_display_list(trend_keys):
-        return [
-            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
-                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
-                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
-            ])
-            for key in trend_keys if key in individual_trends 
-        ]
+        trend_list = []
         
+        # Bestäm konverteringsfaktor för Tx från EUR till Basvalutan
+        if currency == 'SEK':
+            conversion_multiplier = base_price_eur 
+        elif currency in COINS_SYMBOLS:
+            conversion_multiplier = 1 / base_price_eur if base_price_eur else 1.0
+        else: # EUR
+            conversion_multiplier = 1.0
+        
+        for key in trend_keys:
+            trend_data = individual_trends.get(key)
+            
+            # Kolla om data finns
+            if trend_data and trend_data.get('Tx_eur') is not None:
+                Hx = trend_data['Hx']
+                Tx_eur = trend_data['Tx_eur']
+                
+                # Beräkna Tx i basvaluta
+                Tx_base = Tx_eur * conversion_multiplier 
+                
+                # Formatera Hx (poängen)
+                score_display = f"{Hx:,.2f}"
+                score_color = '#006400' if Hx > 0 else ('#8B0000' if Hx < 0 else '#6c757d')
+                
+                # Formatera Tx (beräknad kurs)
+                tx_display = format_price_display(Tx_base)
+                
+                children = [
+                    html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+                    html.Span([
+                        html.Span(score_display, style={'color': score_color, 'fontWeight': '600'}),
+                        # Här läggs den beräknade kursen (Tx) till
+                        html.Span(f" ({tx_display} {currency})", style={'color': '#6c757d', 'marginLeft': '5px', 'fontWeight': 'normal'})
+                    ], style={'textAlign': 'right'})
+                ]
+                trend_list.append(html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=children))
+            else:
+                 trend_list.append(html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
+                    html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+                    html.Span("N/A", style={'color': '#6c757d', 'fontWeight': '600'})
+                 ]))
+
+        return trend_list
+    # SLUT NY FUNKTION
+
     short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
     long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
 
@@ -682,11 +720,10 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             html.P(price_text, id='current-price-display', style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'}),
         ]),
         
-        # 24h Diff och Procent (FIXAT HTML-FELET HÄR)
+        # 24h Diff och Procent 
         html.Div(style={'textAlign': 'center', 'fontSize': '0.9em', 'fontWeight': '600', 'color': price_color, 'margin': '0'}, children=[
-            # Använder html.Span för att visa EUR/SEK diff och format_change (html.Span) sida vid sida
             html.Span(f"({'+' if diff_24h_base >= 0 else ''}{diff_24h_base:,.4f} {currency}, ", style={'marginRight': '0px'}),
-            format_change(change_24h), # Rätt renderat Span-objekt
+            format_change(change_24h), 
             html.Span(")")
         ] if diff_24h_base is not None else html.P("24h Diff: N/A", style={'fontSize': '0.8em', 'color': '#6c757d'})),
 
@@ -713,9 +750,23 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             ]),
         ]),
         
-        # Prisrörelser (Nu med 7d och 30d)
+        # Prisrörelser (Nu med NY ORDNING)
         html.Div(style={'paddingTop': '10px', 'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px 10px'}, children=[
-            create_change_row(p, format_change(percent_data.get(p))) for p in periods_col1 + periods_col2
+            # NY ORDNING: 30m | 12h
+            create_change_row('30m', format_change(percent_data.get('30m'))),
+            create_change_row('12h', format_change(percent_data.get('12h'))),
+
+            # NY ORDNING: 1h | 18h
+            create_change_row('1h', format_change(percent_data.get('1h'))),
+            create_change_row('18h', format_change(percent_data.get('18h'))),
+            
+            # NY ORDNING: 3h | 7d
+            create_change_row('3h', format_change(percent_data.get('3h'))),
+            create_change_row('7d', format_change(percent_data.get('7d'))),
+            
+            # NY ORDNING: 6h | 30d
+            create_change_row('6h', format_change(percent_data.get('6h'))),
+            create_change_row('30d', format_change(percent_data.get('30d'))),
         ])
     ])
 

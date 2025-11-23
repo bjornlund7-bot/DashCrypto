@@ -93,10 +93,10 @@ TREND_WINDOWS = {
     '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3,   'source': '5min', 'show_line': True},
     '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3,   'source': '5min', 'show_line': True},
     '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3,   'source': '5min', 'show_line': True},
-    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3,   'source': '5min', 'show_line': True}, # Ändrat till x3
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2,   'source': '5min', 'show_line': True}, # Ändrat till x2
-    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.6, 'source': '1day', 'show_line': False}, # Ändrat till x0.6
-    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.4, 'source': '1day', 'show_line': False}, # Ändrat till x0.4
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3,   'source': '5min', 'show_line': True}, 
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2,   'source': '5min', 'show_line': True}, 
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.6, 'source': '1day', 'show_line': False}, 
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.4, 'source': '1day', 'show_line': False}, 
 }
 
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
@@ -104,8 +104,8 @@ ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
-# --- ALERT-TRÖSKLAR FÖR H.V. ---
-TRADE_VALUE_ALERTS = sorted([25, 50, 75, 100], reverse=True)
+# --- ALERT-TRÖSKLAR FÖR H.V. (UPPDATERAD) ---
+TRADE_VALUE_ALERTS = sorted([15, 25, 40, 60], reverse=True) # NYA VÄRDEN: +15, +25, +40, +60
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]
@@ -253,19 +253,16 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             'sort_24h': sort_key_24h
         })
 
+    # NY SORTERING ÄR INTE NÖDVÄNDIG HÄR, DEN SKER I CALLBACKEN
+    # summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
+    
+    # För Telegram sorteras den enkelt efter H.V. (numeriskt) och sedan 3h/24h.
+    # Detta ger: Positiva, Noll, Negativa. Detta är standard för Telegram-summaries.
     summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
     # Justera offset till sommar/vintertid
-    offset = 1 # Grund offset för CET
-    # Förenklad DST-kontroll (mars till oktober)
-    if now_utc.month in range(4, 10): 
-        offset = 2 # CEST
-    elif now_utc.month == 3 and now_utc.day > 24 and now_utc.weekday() == 6: # Sista söndagen i mars
-        offset = 2
-    elif now_utc.month == 10 and now_utc.day > 24 and now_utc.weekday() == 6: # Sista söndagen i oktober
-        offset = 1 
-    
+    offset = timezone_offset_hours # Använd offset som kommer från anropet
     now_local = now_utc + timedelta(hours=offset)
     
     header = (
@@ -446,7 +443,7 @@ def check_and_send_trade_value_alerts(alert_data, r_instance):
                     msg = (f"🔥 **HÖGT HANDELSVÄRDE ALERT** 🔥\n"
                            f"Valuta: *{coin_label} ({coin_symbol})*\n"
                            f"Aktuellt Pris: *{format_price_telegram(current_price_eur)} EUR*\n"
-                           f"Handelsvärde ($H.V.$): **+{trade_value}** (Tröskel: +{highest_threshold_met})")
+                           f"Handelsvärde ($H.V.$): **+{int(round(trade_value))}** (Tröskel: +{highest_threshold_met})")
                     send_telegram_message(msg)
                     logger.info(f"Telegram TV Alert skickad: {coin_symbol} HÖGT +{highest_threshold_met}")
 
@@ -512,13 +509,13 @@ def background_data_fetch(redis_instance):
                     redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
 
                 trade_value_int = None
+                trade_value = None
                 if ohlc_5min_data and ohlc_1day_data:
                     hist_5min_current = ohlc_5min_data.copy()
                     hist_5min_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
                     hist_1day_current = ohlc_1day_data.copy()
                     hist_1day_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
                     
-                    # Använd den modifierade funktionen
                     trade_value, _ = calculate_trade_value(hist_5min_current, current_price_eur, hist_1day_current)
                     if trade_value is not None:
                         trade_value_int = int(round(trade_value))
@@ -538,7 +535,7 @@ def background_data_fetch(redis_instance):
                 percent_changes.update(long_term_changes) 
                 all_percent_changes[coin_symbol] = percent_changes
                 alert_data_for_sending[coin_symbol] = {'changes': percent_changes, 'price_eur': current_price_eur}
-                trade_value_alert_data[coin_symbol] = {'trade_value': trade_value_int, 'price_eur': current_price_eur}
+                trade_value_alert_data[coin_symbol] = {'trade_value': trade_value, 'price_eur': current_price_eur} # Använd float-värdet för alert-kontroll
                 time.sleep(0.1) 
             
             if redis_instance:
@@ -560,11 +557,12 @@ def background_summary_sender(redis_instance):
             now_utc = datetime.now(timezone.utc)
             timezone_offset_hours = 1 # Grund offset för CET
             # Förenklad DST-kontroll (mars till oktober)
+            # Notera: Detta är en förenkling och kan vara fel beroende på exakt datum.
             if now_utc.month in range(4, 10): 
                 timezone_offset_hours = 2 # CEST
-            elif now_utc.month == 3 and now_utc.day > 24 and now_utc.weekday() == 6: # Sista söndagen i mars
+            elif now_utc.month == 3 and now_utc.day > 24 and now_utc.weekday() == 6: 
                 timezone_offset_hours = 2
-            elif now_utc.month == 10 and now_utc.day > 24 and now_utc.weekday() == 6: # Sista söndagen i oktober
+            elif now_utc.month == 10 and now_utc.day > 24 and now_utc.weekday() == 6: 
                 timezone_offset_hours = 1 
             
             now_local = now_utc + timedelta(hours=timezone_offset_hours)
@@ -844,6 +842,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                 ]),
                 html.Div([
                     html.P('**Handelsvärde (H.V.) (Endast Positiv):**', style={'fontWeight': 'bold', 'color': '#006400', 'margin': '0 0 5px 0'}),
+                    # Här visas de nya trösklarna: +15, +25, +40, +60
                     html.Ul([html.Li(f'+{t}') for t in TRADE_VALUE_ALERTS], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'}) 
                 ]),
             ]),
@@ -853,6 +852,34 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     ]),
     dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
 ])
+
+# --- FUNKTION FÖR NY SORTERING AV SAMMANFATTNINGS-DATAN ---
+def get_summary_sort_key(item):
+    tv = item.get('trade_value')
+    
+    # 1. H.V. Grouping: Positive (1), Zero (0), Negative (-1), N/A (-2)
+    if tv is None:
+        group_key = -2
+    elif tv > 0:
+        group_key = 1
+    elif tv == 0:
+        group_key = 0 # Detta flyttar 0 till att sorteras efter positiva och före negativa.
+    else: # tv < 0
+        group_key = -1
+        
+    # 2. Magnitude Key: H.V. value (används för att sortera inom grupperna)
+    magnitude_key = tv if tv is not None else -float('inf')
+    
+    # 3. Secondary Percentage Keys
+    # Använder 30m, 1h, 6h som sekundära sorteringskriterier
+    s30 = item['percent'].get('30m', -float('inf'))
+    s1h = item['percent'].get('1h', -float('inf'))
+    s6h = item['percent'].get('6h', -float('inf'))
+    
+    # Sort by (Group Key DESC, Magnitude Key DESC, s30 DESC, s1h DESC, s6h DESC)
+    return (group_key, magnitude_key, s30, s1h, s6h) 
+# --- SLUT SORTERINGS-FUNKTION ---
+
 
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
@@ -939,9 +966,10 @@ def update_all_live_data(n, coin_symbol, currency):
         if currency == 'SEK': pb = pe * eur_to_sek if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
-        summary_data.append({'symbol': sl, 'label': label, 'price': pb, 'percent': pd, 'trade_value': tv_int, 'sort_tv': tv_int if tv_int else -float('inf'), 's30': pd.get('30m', -float('inf')), 's1h': pd.get('1h', -float('inf')), 's6h': pd.get('6h', -float('inf'))})
+        summary_data.append({'symbol': sl, 'label': label, 'price': pb, 'percent': pd, 'trade_value': tv_int})
 
-    summary_data.sort(key=lambda x: (x['sort_tv'], x['s30'], x['s1h'], x['s6h']), reverse=True)
+    # ANVÄND NY SORTERINGS-FUNKTION FÖR ATT HANTERA N.V.=0
+    summary_data.sort(key=get_summary_sort_key, reverse=True)
     
     # --- UPPDATERAT TABELLHUVUD ---
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}

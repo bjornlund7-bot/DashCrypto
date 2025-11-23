@@ -9,14 +9,14 @@ import requests
 import json
 import logging
 from redis import from_url, exceptions
-from scipy.stats import linregress 
-import numpy as np 
+from scipy.stats import linregress
+import numpy as np
 from datetime import datetime, timezone, timedelta
 
 # --- Konstanter, Logging och API Konfiguration ---
 
 # Konfigurera logging
-logging.basicConfig(level=logging.DEBUG, 
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
@@ -30,39 +30,39 @@ KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
 CRYPTO_PAIRS = {
-    'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR', 
-    'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR', 
-    'DOT (Polkadot)': 'DOT/EUR', 'DOGE (Dogecoin)': 'DOGE/EUR', 'PUMP (PUMP)': 'PUMP/EUR', 
-    'Cookie DAO': 'COOKIE/EUR', 'Moonwalk (MF)': 'MF/EUR', 'YALA': 'YALA/EUR', 
-    'WIF (dogwifhat)': 'WIF/EUR', 'YFI (Yearn Finance)': 'YFI/EUR', 'BNB (BNB Chain)': 'BNB/EUR', 
-    'TRX (Tron)': 'TRX/EUR', 'PEPE (Pepe)': 'PEPE/EUR', 'LTC (Litecoin)': 'LTC/EUR', 
-    'TRUMP (Official Trump)': 'TRUMP/EUR', 'XTZ (Tezos)': 'XTZ/EUR', 'DASH (Dash)': 'DASH/EUR', 
-    'ZRO (LayerZero)': 'ZRO/EUR', 'WOO (Woo Network)': 'WOO/EUR', 'GALA (Gala Games)': 'GALA/EUR', 
-    'SUI (SUI)': 'SUI/EUR', 'BCH (Bitcoin Cash)': 'BCH/EUR', 'ATOM (Cosmos)': 'ATOM/EUR', 
-    'AVAX (Avalanche)': 'AVAX/EUR', 'ICP (Internet Computer Protocol)': 'ICP/EUR', 
-    'ZEC (Zcash)': 'ZEC/EUR', '0G (ZeroGravity)': '0G/EUR', 'XDC (XDC Network)': 'XDC/EUR', 
-    'UNI (Uniswap)': 'UNI/EUR', 'IP (Story)': 'IP/EUR', 'INJ (Injective)': 'INJ/EUR', 
-    'AR (Arweave)': 'AR/EUR', 'EGLD (MultiversX)': 'EGLD/EUR', 'LPT (LivePeer)': 'LPT/EUR', 
-    'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR', 
-    'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR', 
-    'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR', 
+    'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
+    'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR',
+    'DOT (Polkadot)': 'DOT/EUR', 'DOGE (Dogecoin)': 'DOGE/EUR', 'PUMP (PUMP)': 'PUMP/EUR',
+    'Cookie DAO': 'COOKIE/EUR', 'Moonwalk (MF)': 'MF/EUR', 'YALA': 'YALA/EUR',
+    'WIF (dogwifhat)': 'WIF/EUR', 'YFI (Yearn Finance)': 'YFI/EUR', 'BNB (BNB Chain)': 'BNB/EUR',
+    'TRX (Tron)': 'TRX/EUR', 'PEPE (Pepe)': 'PEPE/EUR', 'LTC (Litecoin)': 'LTC/EUR',
+    'TRUMP (Official Trump)': 'TRUMP/EUR', 'XTZ (Tezos)': 'XTZ/EUR', 'DASH (Dash)': 'DASH/EUR',
+    'ZRO (LayerZero)': 'ZRO/EUR', 'WOO (Woo Network)': 'WOO/EUR', 'GALA (Gala Games)': 'GALA/EUR',
+    'SUI (SUI)': 'SUI/EUR', 'BCH (Bitcoin Cash)': 'BCH/EUR', 'ATOM (Cosmos)': 'ATOM/EUR',
+    'AVAX (Avalanche)': 'AVAX/EUR', 'ICP (Internet Computer Protocol)': 'ICP/EUR',
+    'ZEC (Zcash)': 'ZEC/EUR', '0G (ZeroGravity)': '0G/EUR', 'XDC (XDC Network)': 'XDC/EUR',
+    'UNI (Uniswap)': 'UNI/EUR', 'IP (Story)': 'IP/EUR', 'INJ (Injective)': 'INJ/EUR',
+    'AR (Arweave)': 'AR/EUR', 'EGLD (MultiversX)': 'EGLD/EUR', 'LPT (LivePeer)': 'LPT/EUR',
+    'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR',
+    'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
+    'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
     'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
 }
 
 CRYPTO_EMOJIS = {
-    'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳', 
-    'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '🚀', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁', 
-    'WIF': '🐶', 'YFI': '🚜', 'BNB': '🟡', 'TRX': '🌐', 'PEPE': '🐸', 'LTC': '🥈', 
-    'TRUMP': '🦅', 'XTZ': '⚙️', 'DASH': '🪙', 'ZRO': '🔗', 'WOO': '🐻', 'GALA': '🎮', 
-    'SUI': '💧', 'BCH': '🌱', 'ATOM': '⚛️', 'AVAX': '🔺', 'ICP': '💻', 'ZEC': '🦓', 
-    '0G': '🌌', 'XDC': '🤝', 'UNI': '🦄', 'IP': '📖', 'INJ': '💉', 'AR': '📦', 
-    'EGLD': '⚡', 'LPT': '🎥', 'KSM': '🐥', 'EUL': '🏛️', 'GMX': '🐻', 'AUCTION': '🔨', 
-    'MOVR': '🌕', 'SSV': '🔐', 'MLN': '🧪', 'ALCX': '⚗️', 'AERO': '✈️', 'MYX': '🔄', 
+    'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳',
+    'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '🚀', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁',
+    'WIF': '🐶', 'YFI': '🚜', 'BNB': '🟡', 'TRX': '🌐', 'PEPE': '🐸', 'LTC': '🥈',
+    'TRUMP': '🦅', 'XTZ': '⚙️', 'DASH': '🪙', 'ZRO': '🔗', 'WOO': '🐻', 'GALA': '🎮',
+    'SUI': '💧', 'BCH': '🌱', 'ATOM': '⚛️', 'AVAX': '🔺', 'ICP': '💻', 'ZEC': '🦓',
+    '0G': '🌌', 'XDC': '🤝', 'UNI': '🦄', 'IP': '📖', 'INJ': '💉', 'AR': '📦',
+    'EGLD': '⚡', 'LPT': '🎥', 'KSM': '🐥', 'EUL': '🏛️', 'GMX': '🐻', 'AUCTION': '🔨',
+    'MOVR': '🌕', 'SSV': '🔐', 'MLN': '🧪', 'ALCX': '⚗️', 'AERO': '✈️', 'MYX': '🔄',
     'GNO': '🦉',
 }
 
-DEFAULT_PAIR_KEY = 'XRP (Ripple)' 
-DEFAULT_COIN_SYMBOL = DEFAULT_PAIR_KEY.split(' ')[0] 
+DEFAULT_PAIR_KEY = 'XRP (Ripple)'
+DEFAULT_COIN_SYMBOL = DEFAULT_PAIR_KEY.split(' ')[0]
 
 COINS_LABELS = list(CRYPTO_PAIRS.keys())
 COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
@@ -70,37 +70,45 @@ COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
 BASE_CURRENCIES = ['EUR', 'SEK'] + [s for s in COINS_SYMBOLS]
 SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
 
-UPDATE_INTERVAL_SECONDS_DATA = 120 
-OHLC_CACHE_INTERVAL_MIN = 5 
+UPDATE_INTERVAL_SECONDS_DATA = 120
+OHLC_CACHE_INTERVAL_MIN = 5
 
 # Tidsintervall för schemalagd sammanställning (i 24-timmarsformat)
-SUMMARY_SCHEDULE_HOURS = [6, 9, 12, 15, 18, 21] 
-REDIS_SUMMARY_KEY = 'summary_last_sent_time' 
+SUMMARY_SCHEDULE_HOURS = [6, 9, 12, 15, 18, 21]
+REDIS_SUMMARY_KEY = 'summary_last_sent_time'
 
 TIME_WINDOWS = {
-    '30m': {'blocks': 6, 'interval': OHLC_CACHE_INTERVAL_MIN},  
-    '1h': {'blocks': 12, 'interval': OHLC_CACHE_INTERVAL_MIN},  
-    '3h': {'blocks': 36, 'interval': OHLC_CACHE_INTERVAL_MIN},  
-    '6h': {'blocks': 72, 'interval': OHLC_CACHE_INTERVAL_MIN}, 
-    '12h': {'blocks': 144, 'interval': OHLC_CACHE_INTERVAL_MIN}, 
+    '30m': {'blocks': 6, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '1h': {'blocks': 12, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '3h': {'blocks': 36, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '6h': {'blocks': 72, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '12h': {'blocks': 144, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '18h': {'blocks': 216, 'interval': OHLC_CACHE_INTERVAL_MIN}, # 18 timmar
     '24h': {'blocks': 288, 'interval': OHLC_CACHE_INTERVAL_MIN},
-    '7d': {'blocks': 7, 'interval': 1440},  
-    '30d': {'blocks': 30, 'interval': 1440}, 
+    '7d': {'blocks': 7, 'interval': 1440}, # 1 dag intervall
+    '30d': {'blocks': 30, 'interval': 1440}, # 1 dag intervall
 }
 
+# Konfiguration för Trendlinjer och H.V. beräkning
+# source: '5min' (använder korttidsdata) eller '1day' (använder långtidsdata)
+# show_line: Om True ritas linjen ut i grafen (endast för 5min data)
 TREND_WINDOWS = {
-    '1h': {'blocks': 12, 'color': '#ff7f0e', 'name': 'Trend (1h)', 'weight': 3}, 
-    '3h': {'blocks': 36, 'color': '#2ca02c', 'name': 'Trend (3h)', 'weight': 7}, 
-    '6h': {'blocks': 72, 'color': '#d62728', 'name': 'Trend (6h)', 'weight': 5}, 
-    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3}, 
+    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 5, 'source': '5min', 'show_line': True},
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 5, 'source': '5min', 'show_line': True},
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 3, 'source': '1day', 'show_line': False},
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 2, 'source': '1day', 'show_line': False},
 }
+
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
-ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75]) 
+ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # Tröskelvärden för Handelsvärde alerts (Endast positiva används i alert-logiken)
-TRADE_VALUE_ALERTS = sorted([10, 20, 30, 50], reverse=True) 
+TRADE_VALUE_ALERTS = sorted([10, 20, 30, 50], reverse=True)
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]
@@ -118,22 +126,22 @@ if REDIS_URL:
 DEFAULT_DATA = {
     'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
     'timestamp': time.time(),
-    'EUR_SEK_RATE': 11.0, 
-    'ALL_24H_RANGE_OHLC': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}}, 
-    'ALL_OHLC_CACHED': {}, 
+    'EUR_SEK_RATE': 11.0,
+    'ALL_24H_RANGE_OHLC': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}},
+    'ALL_OHLC_CACHED': {},
     'ALL_PERCENT_CHANGE': {},
 }
 
 # --- Hjälpfunktioner ---
 
 def format_price_display(p):
-    """Formaterar priset med rätt decimaler för Dashboard. Fler decimaler för pris under 1 EUR."""
+    """Formaterar priset med rätt decimaler för Dashboard."""
     if p is None: return "N/A"
     price_format = f"{p:,.8f}" if p < 0.1 else (f"{p:,.4f}" if p < 10 else f"{p:,.2f}")
     return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
 
 def format_price_telegram(p):
-    """Formaterar priset för Telegram (få decimaler, inga tusentalsavgränsare för små valutor)."""
+    """Formaterar priset för Telegram."""
     if p is None: return "N/A"
     if p < 10:
         return f"{p:.4f}".replace(".", ",")
@@ -154,7 +162,6 @@ def get_data_from_redis():
 def format_change_telegram(c):
     """Formaterar procentuell förändring för Telegram-text."""
     if c is None: return " N/A "
-    
     sign = "+" if c >= 0 else ""
     return f"{sign}{c:.2f}%".rjust(6)
 
@@ -165,14 +172,59 @@ def format_trade_value_telegram(v):
     return f"{sign}{int(round(v))}".rjust(4)
 
 
+def calculate_trade_value(short_term_data, current_price_eur, long_term_data=None):
+    """
+    Beräknar Handelsvärdet. Hanterar nu både 5-minuters data och daglig data
+    beroende på konfigurationen i TREND_WINDOWS.
+    """
+    if not short_term_data or current_price_eur is None:
+        return None
+
+    V = current_price_eur
+    trade_value = 0.0
+    
+    for key, config in TREND_WINDOWS.items():
+        blocks = config['blocks']
+        weight = config['weight']
+        source = config.get('source', '5min')
+        
+        # Välj rätt dataset
+        historical_data = None
+        if source == '5min':
+            historical_data = short_term_data
+        elif source == '1day':
+            historical_data = long_term_data
+            
+        if not historical_data:
+            continue
+        
+        # Hämta segmentet
+        data_segment = historical_data[-blocks:] 
+        
+        if len(data_segment) < blocks:
+            continue 
+
+        x_values = np.arange(blocks) 
+        y_values = np.array([item['price'] for item in data_segment])
+        
+        slope, intercept, _, _, _ = linregress(x_values, y_values)
+        
+        # Trendlinjens pris vid den sista datapunkten (nuvarande tid)
+        Tx = slope * (blocks - 1) + intercept 
+        
+        if V is not None and V != 0:
+            # Hx = (((Tx - V) / V) * 100) * weight
+            Hx = (((Tx - V) / V) * 100) * weight
+            trade_value += Hx
+
+    return trade_value if trade_value is not None else None
+
 def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     """
     Formaterar den sorterade listan av kryptovalutor till ett läsbart Telegram-meddelande.
     UPPDATERAD: Visar Krypto | Pris EUR | 3h | 24h | H.V.
     """
     summary_data = []
-    
-    # Hämtar 5-min OHLC intervallet (används för att beräkna Handelsvärdet)
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN
 
     for label in COINS_LABELS:
@@ -181,25 +233,31 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         price_eur = data.get(f'{coin_symbol_loop}/EUR')
         percent_data_loop = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol_loop, {})
         
-        # Hämta historisk data för Handelsvärdet
+        # Hämta historisk data (5min och 1day) för Handelsvärdet
         ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{ticker}'
-        historical_data_json = r.get(ohlc_cache_key) if r else None
-        historical_data = json.loads(historical_data_json) if historical_data_json else []
+        hist_data_5min_json = r.get(ohlc_cache_key) if r else None
+        hist_data_5min = json.loads(hist_data_5min_json) if hist_data_5min_json else []
+
+        ohlc_1day_key = f'OHLC_1DAY_{ticker}'
+        hist_data_1day_json = r.get(ohlc_1day_key) if r else None
+        hist_data_1day = json.loads(hist_data_1day_json) if hist_data_1day_json else []
         
         trade_value_int = None
-        if historical_data and price_eur is not None:
-            # Vi lägger till den aktuella priset som den sista datapunkten
-            historical_data_with_current = historical_data.copy()
-            historical_data_with_current.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
+        if hist_data_5min and price_eur is not None:
+            # Förbered data med nuvarande pris
+            h_5min = hist_data_5min.copy()
+            h_5min.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
             
-            trade_value = calculate_trade_value(historical_data_with_current, price_eur)
+            h_1day = hist_data_1day.copy()
+            h_1day.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
+            
+            trade_value = calculate_trade_value(h_5min, price_eur, h_1day)
             if trade_value is not None:
                 trade_value_int = int(round(trade_value))
 
-        # Hämta värden för sortering (3h och 24h)
+        # Sorteringsnycklar
         sort_key_3h = percent_data_loop.get('3h') if percent_data_loop.get('3h') is not None else -float('inf')
         sort_key_24h = percent_data_loop.get('24h') if percent_data_loop.get('24h') is not None else -float('inf')
-        
         sort_trade_value = trade_value_int if trade_value_int is not None else -float('inf')
 
         summary_data.append({
@@ -216,7 +274,6 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
-    # Justera tidszon för CET/CEST 
     timezone_offset_hours = 1 if now_utc.month in range(3, 10) and now_utc.day > (7 - now_utc.weekday()) or (now_utc.month == 10 and now_utc.day <= 31) else 1
     now_local = now_utc + timedelta(hours=timezone_offset_hours)
     
@@ -226,7 +283,6 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         f"Sorterad efter Handelsvärde (Vägt genomsnitt av trendavvikelse)."
     )
     
-    # Uppdaterad tabell-header för att matcha kolumnerna
     table_header = (
         "```"
         "KRYPTO | PRIS EUR |  3H   |  24H  | H.V.\n"
@@ -240,13 +296,11 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         price_str = format_price_telegram(item['price_eur'])
         price_display = price_str.rjust(8) 
 
-        # Hämtar 3h och 24h förändring
         change_3h = format_change_telegram(item['percent_data'].get('3h'))
         change_24h = format_change_telegram(item['percent_data'].get('24h'))
         
         trade_value_str = format_trade_value_telegram(item['trade_value_int']) 
         
-        # Bygger raden med nya kolumner
         row = f"{symbol} | {price_display} |{change_3h} |{change_24h} |{trade_value_str}"
         table_rows.append(row)
 
@@ -371,44 +425,6 @@ def calculate_trendline(historical_data, blocks):
     
     return slope, intercept, start_index_global
 
-def calculate_trade_value(historical_data, current_price_eur):
-    """
-    Beräknar Handelsvärdet baserat på aktuellt pris relativt trendlinjernas
-    värde vid den aktuella tidpunkten (sista dataindexet).
-    """
-    if not historical_data or current_price_eur is None:
-        return None
-
-    V = current_price_eur
-    trade_value = 0.0
-    
-    for key, config in TREND_WINDOWS.items():
-        blocks = config['blocks']
-        weight = config['weight']
-        
-        data_segment = historical_data[-blocks:] 
-        
-        if len(data_segment) < blocks:
-            continue 
-
-        x_values = np.arange(blocks) 
-        y_values = np.array([item['price'] for item in data_segment])
-        
-        slope, intercept, _, _, _ = linregress(x_values, y_values)
-        
-        # Trendlinjens pris vid den sista datapunkten (nuvarande tid)
-        Tx = slope * (blocks - 1) + intercept 
-        
-        if V is not None and V != 0:
-            # Hx = (((Tx - V) / V) * 100) * weight
-            # Handelsvärdet är den viktade summan av skillnaden mellan trendpris (Tx) och nuvarande pris (V) i procent
-            Hx = (((Tx - V) / V) * 100) * weight
-            trade_value += Hx
-        else:
-            return None 
-
-    return trade_value if trade_value is not None else None
-
 def format_change(c):
     """Formaterar procentuell förändring med färg och symbol för Dashboard."""
     if c is None: 
@@ -475,108 +491,7 @@ def send_telegram_message(message):
         logger.error(f"Kunde inte skicka Telegram-meddelande: {e}")
         return False
 
-def background_data_fetch(redis_instance):
-    """Hämtar Ticker och OHLC data, beräknar förändringar, cachar till Redis och kör ALERTS."""
-    UPDATE_CYCLE_SECONDS = UPDATE_INTERVAL_SECONDS_DATA
-    
-    while True:
-        cycle_start_time = time.time()
-        
-        try:
-            logger.debug("--- Bakgrundstråd: Startar uppdateringscykel ---")
-            
-            new_data = fetch_crypto_data()
-            if not new_data or new_data == DEFAULT_DATA:
-                logger.warning("Misslyckades med att hämta aktuell tickerdata. Försöker igen senare.")
-                time.sleep(UPDATE_CYCLE_SECONDS)
-                continue
-                
-            all_percent_changes = {}
-            all_24h_range_ohlc = {} 
-            alert_data_for_sending = {} 
-            trade_value_alert_data = {} 
-
-            # 1. Hämta data och beräkna %-förändring OCH 24h Hög/Låg för ALLA VALUTOR
-            for label, ticker in CRYPTO_PAIRS.items():
-                coin_symbol = label.split(' ')[0]
-                current_price_eur = new_data.get(f'{coin_symbol}/EUR')
-                
-                if current_price_eur is None:
-                    continue
-                    
-                # a. Hämta 5-min OHLC (24h historik)
-                periods_ago_24h = 86400 
-                ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
-                
-                trade_value_int = None
-                if ohlc_5min_data:
-                    prices_eur = [item['price'] for item in ohlc_5min_data]
-                    if prices_eur:
-                        max_ohlc = max(prices_eur) 
-                        min_ohlc = min(prices_eur)
-                        all_24h_range_ohlc[coin_symbol] = {'high_eur': max_ohlc, 'low_eur': min_ohlc}
-                    
-                    # Beräkna Handelsvärdet (Behöver aktuellt pris som sista punkt)
-                    historical_data_with_current = ohlc_5min_data.copy()
-                    historical_data_with_current.append({'time': new_data.get('timestamp', time.time()), 'price': current_price_eur})
-                    trade_value = calculate_trade_value(historical_data_with_current, current_price_eur)
-                    if trade_value is not None:
-                        trade_value_int = int(round(trade_value))
-
-                    # Cacha OHLC-data (utan nuvarande pris)
-                    ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
-                    redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200) 
-                         
-                    short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
-                    percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
-                else:
-                    short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
-                    percent_changes = {k: None for k in short_term_periods.keys()}
-
-                # b. Hämta 1-dag OHLC (för längre tidsramar 7d, 30d)
-                periods_ago_30d = 2592000 
-                ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
-                long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
-                long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
-                
-                percent_changes.update(long_term_changes) 
-                all_percent_changes[coin_symbol] = percent_changes
-                
-                alert_data_for_sending[coin_symbol] = {
-                    'changes': percent_changes,
-                    'price_eur': current_price_eur 
-                }
-                
-                trade_value_alert_data[coin_symbol] = {
-                    'trade_value': trade_value_int,
-                    'price_eur': current_price_eur
-                }
-
-                time.sleep(0.1) 
-            
-            # --- Steg 2: KÖR ALERT KONTROLL ---
-            if redis_instance:
-                check_and_send_alerts(alert_data_for_sending, redis_instance)
-                check_and_send_trade_value_alerts(trade_value_alert_data, redis_instance) 
-            
-            # --- Steg 3: SPARA TILL REDIS ---
-            new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
-            new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc 
-            
-            if redis_instance:
-                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
-                logger.debug("✅ Hela 'crypto_data' inkl procentrörelser och 24h OHLC-intervall sparad.")
-            
-            cycle_duration = time.time() - cycle_start_time
-            time_to_sleep = UPDATE_CYCLE_SECONDS - cycle_duration
-            if time_to_sleep > 0:
-                time.sleep(time_to_sleep)
-            else:
-                logger.warning(f"Cykeln tog lång tid: {cycle_duration:.2f}s")
-                
-        except Exception as e:
-            logger.error(f"❌ Fel i bakgrundstråd: {e}")
-            time.sleep(60)
+# --- Alert funktioner ---
 
 def check_and_send_trade_value_alerts(alert_data, r_instance):
     """
@@ -607,7 +522,6 @@ def check_and_send_trade_value_alerts(alert_data, r_instance):
             if highest_threshold_met is not None:
                 key = f"tv_alert:{coin_symbol}:+{highest_threshold_met}"
                 
-                # Kontrollerar om alerten redan skickats under debounce-perioden
                 if r_instance.set(key, 1, ex=TRADE_VALUE_DEBOUNCE_SECONDS, nx=True):
                     message = (
                         f"🔥 **HÖGT HANDELSVÄRDE ALERT** 🔥\n"
@@ -621,7 +535,7 @@ def check_and_send_trade_value_alerts(alert_data, r_instance):
         # --- Negativt Handelsvärde Ignoreras ---
 
 def check_and_send_alerts(alert_data, r_instance):
-    """Kontrollerar och skickar alerts baserat på procentuell prisrörelse (Prisrörelser)."""
+    """Kontrollerar och skickar alerts baserat på procentuell prisrörelse."""
     if not r_instance:
         return
 
@@ -682,6 +596,121 @@ def check_and_send_alerts(alert_data, r_instance):
                         )
                         send_telegram_message(message)
                         logger.info(f"Telegram Alert skickad: {coin_symbol} LÄGST {lowest_threshold_met}% på {period}")
+
+# --- Bakgrundstrådar ---
+
+def background_data_fetch(redis_instance):
+    """Hämtar Ticker och OHLC data, cachar BÅDE 5min och 1day, samt kör ALERTS."""
+    UPDATE_CYCLE_SECONDS = UPDATE_INTERVAL_SECONDS_DATA
+    
+    while True:
+        cycle_start_time = time.time()
+        
+        try:
+            logger.debug("--- Bakgrundstråd: Startar uppdateringscykel ---")
+            
+            new_data = fetch_crypto_data()
+            if not new_data or new_data == DEFAULT_DATA:
+                logger.warning("Misslyckades med att hämta aktuell tickerdata. Försöker igen senare.")
+                time.sleep(UPDATE_CYCLE_SECONDS)
+                continue
+                
+            all_percent_changes = {}
+            all_24h_range_ohlc = {} 
+            alert_data_for_sending = {} 
+            trade_value_alert_data = {} 
+
+            # 1. Hämta data för ALLA VALUTOR
+            for label, ticker in CRYPTO_PAIRS.items():
+                coin_symbol = label.split(' ')[0]
+                current_price_eur = new_data.get(f'{coin_symbol}/EUR')
+                
+                if current_price_eur is None:
+                    continue
+                    
+                # --- a. Hämta 5-min OHLC (24h historik) ---
+                periods_ago_24h = 86400 
+                ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
+                
+                # Cacha 5-min data
+                if ohlc_5min_data:
+                     ohlc_cache_key = f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}'
+                     redis_instance.set(ohlc_cache_key, json.dumps(ohlc_5min_data), ex=7200)
+
+                # --- b. Hämta 1-dag OHLC (för 7d, 30d och % förändring) ---
+                periods_ago_30d = 2592000 
+                ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
+                
+                # NYTT: Cacha 1-dag data (så frontend kan räkna H.V på 7d/30d)
+                if ohlc_1day_data:
+                    ohlc_1day_key = f'OHLC_1DAY_{ticker}'
+                    redis_instance.set(ohlc_1day_key, json.dumps(ohlc_1day_data), ex=86400)
+
+                # --- c. Beräkna Handelsvärde (Live) ---
+                trade_value_int = None
+                if ohlc_5min_data and ohlc_1day_data:
+                    # Förbered data med nuvarande pris
+                    hist_5min_current = ohlc_5min_data.copy()
+                    hist_5min_current.append({'time': new_data.get('timestamp', time.time()), 'price': current_price_eur})
+                    
+                    hist_1day_current = ohlc_1day_data.copy()
+                    hist_1day_current.append({'time': new_data.get('timestamp', time.time()), 'price': current_price_eur})
+
+                    # Skicka med BÅDE 5min och 1day data
+                    trade_value = calculate_trade_value(hist_5min_current, current_price_eur, hist_1day_current)
+                    if trade_value is not None:
+                        trade_value_int = int(round(trade_value))
+                
+                # --- d. Övrig logik (Range, Alerts, Percent) ---
+                if ohlc_5min_data:
+                    prices_eur = [item['price'] for item in ohlc_5min_data]
+                    if prices_eur:
+                        all_24h_range_ohlc[coin_symbol] = {'high_eur': max(prices_eur), 'low_eur': min(prices_eur)}
+                    
+                    short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
+                    percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
+                else:
+                    percent_changes = {}
+
+                long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
+                long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
+                
+                percent_changes.update(long_term_changes) 
+                all_percent_changes[coin_symbol] = percent_changes
+                
+                alert_data_for_sending[coin_symbol] = {
+                    'changes': percent_changes,
+                    'price_eur': current_price_eur 
+                }
+                
+                trade_value_alert_data[coin_symbol] = {
+                    'trade_value': trade_value_int,
+                    'price_eur': current_price_eur
+                }
+
+                time.sleep(0.1) 
+            
+            # --- Steg 2: KÖR ALERT KONTROLL ---
+            if redis_instance:
+                check_and_send_alerts(alert_data_for_sending, redis_instance)
+                check_and_send_trade_value_alerts(trade_value_alert_data, redis_instance) 
+            
+            # --- Steg 3: SPARA TILL REDIS ---
+            new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
+            new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc 
+            
+            if redis_instance:
+                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
+                logger.debug("✅ Hela 'crypto_data' sparad.")
+            
+            cycle_duration = time.time() - cycle_start_time
+            time_to_sleep = UPDATE_CYCLE_SECONDS - cycle_duration
+            if time_to_sleep > 0:
+                time.sleep(time_to_sleep)
+                
+        except Exception as e:
+            logger.error(f"❌ Fel i bakgrundstråd: {e}")
+            time.sleep(60)
 
 def background_summary_sender(redis_instance):
     """Schemalägger och skickar sammanställning till Telegram."""
@@ -933,7 +962,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                  dcc.Checklist(
                      id='trendline-checkboxes',
                      options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items()],
-                     value=list(TREND_WINDOWS.keys()), 
+                     value=[k for k, v in TREND_WINDOWS.items() if v.get('show_line')], 
                      inline=True,
                      style={'display': 'inline-block'}
                  ),
@@ -1009,27 +1038,38 @@ def update_all_live_data(n, coin_symbol, currency):
         if current_price_eur is not None and base_price_eur is not None and base_price_eur != 0:
             current_price_base_currency = current_price_eur / base_price_eur
     
-    # Hämta OHLC data för den valda valutan
+    # Hämta OHLC data för den valda valutan (BÅDE 5min och 1day för H.V.)
     selected_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
-    ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{selected_ticker}' 
-    historical_data_json = r.get(ohlc_cache_key) if r else None
-    historical_data = json.loads(historical_data_json) if historical_data_json else []
+    
+    # Hämta 5min
+    ohlc_cache_key_5min = f'OHLC_CACHED_{ohlc_interval}MIN_{selected_ticker}' 
+    hist_data_5min_json = r.get(ohlc_cache_key_5min) if r else None
+    hist_data_5min = json.loads(hist_data_5min_json) if hist_data_5min_json else []
+
+    # Hämta 1day
+    ohlc_1day_key = f'OHLC_1DAY_{selected_ticker}'
+    hist_data_1day_json = r.get(ohlc_1day_key) if r else None
+    hist_data_1day = json.loads(hist_data_1day_json) if hist_data_1day_json else []
     
     trade_value = None
     chart_data_store = None
     
-    if historical_data and current_price_eur is not None:
-        historical_data_with_current = historical_data.copy()
-        historical_data_with_current.append({'time': timestamp, 'price': current_price_eur})
+    if hist_data_5min and current_price_eur is not None:
+        # Förbered data för H.V. beräkning
+        hist_5min_curr = hist_data_5min.copy()
+        hist_5min_curr.append({'time': timestamp, 'price': current_price_eur})
         
-        trade_value = calculate_trade_value(historical_data_with_current, current_price_eur)
+        hist_1day_curr = hist_data_1day.copy()
+        hist_1day_curr.append({'time': timestamp, 'price': current_price_eur})
         
-        prices_eur = [item['price'] for item in historical_data_with_current]
+        trade_value = calculate_trade_value(hist_5min_curr, current_price_eur, hist_1day_curr)
+        
+        prices_eur = [item['price'] for item in hist_5min_curr]
         max_ohlc = max(prices_eur) if prices_eur else None
         min_ohlc = min(prices_eur) if prices_eur else None
         
         chart_data_store = {
-            'historical_data': historical_data_with_current,
+            'historical_data': hist_5min_curr,
             'current_price_eur': current_price_eur,
             'max_ohlc_eur': max_ohlc,
             'min_ohlc_eur': min_ohlc,
@@ -1065,17 +1105,25 @@ def update_all_live_data(n, coin_symbol, currency):
         price_eur = data.get(f'{coin_symbol_loop}/EUR')
         percent_data_loop = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol_loop, {})
         
-        # Hämta OHLC data för loopen för att beräkna Handelsvärdet
+        # Hämta 5min
         ohlc_cache_key_loop = f'OHLC_CACHED_{ohlc_interval}MIN_{ticker_loop}' 
-        historical_data_json_loop = r.get(ohlc_cache_key_loop) if r else None
-        historical_data_loop = json.loads(historical_data_json_loop) if historical_data_json_loop else []
+        hist_loop_json = r.get(ohlc_cache_key_loop) if r else None
+        hist_loop_5min = json.loads(hist_loop_json) if hist_loop_json else []
+
+        # Hämta 1day
+        ohlc_1day_key_loop = f'OHLC_1DAY_{ticker_loop}'
+        hist_loop_1day_json = r.get(ohlc_1day_key_loop) if r else None
+        hist_loop_1day = json.loads(hist_loop_1day_json) if hist_loop_1day_json else []
         
         trade_value_int = None
-        if historical_data_loop and price_eur is not None:
-            historical_data_with_current_loop = historical_data_loop.copy()
-            historical_data_with_current_loop.append({'time': timestamp, 'price': price_eur})
+        if hist_loop_5min and price_eur is not None:
+            h_5min_l = hist_loop_5min.copy()
+            h_5min_l.append({'time': timestamp, 'price': price_eur})
             
-            trade_value_loop = calculate_trade_value(historical_data_with_current_loop, price_eur)
+            h_1day_l = hist_loop_1day.copy()
+            h_1day_l.append({'time': timestamp, 'price': price_eur})
+            
+            trade_value_loop = calculate_trade_value(h_5min_l, price_eur, h_1day_l)
             if trade_value_loop is not None:
                 trade_value_int = int(round(trade_value_loop))
 
@@ -1196,68 +1244,58 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     
     figure.add_trace(go.Scatter(x=times, y=prices_display, mode='lines+markers', name=f'Kurs ({ohlc_interval} min)', line=dict(color='#0056b3', width=3), marker=dict(size=4), hoverinfo='x+y'))
     
-    if high_24h_display: figure.add_hline(y=high_24h_display, line_dash="dot", line_color="green", annotation_text=f"OHLC Högsta: {format_price_display(high_24h_display)} {currency}", annotation_position="top right")
-    if low_24h_display: figure.add_hline(y=low_24h_display, line_dash="dot", line_color="red", annotation_text=f"OHLC Lägsta: {format_price_display(low_24h_display)} {currency}", annotation_position="bottom right")
+    # Lägg till HÖG/LÅG linjer
+    if high_24h_display: 
+        figure.add_hline(y=high_24h_display, line_dash="dash", line_color="green", annotation_text="24h Hög", annotation_position="top left")
+    
+    if low_24h_display:
+        figure.add_hline(y=low_24h_display, line_dash="dash", line_color="red", annotation_text="24h Låg", annotation_position="bottom left")
 
-    for trend_key, config in TREND_WINDOWS.items():
-        if trend_key in selected_trends: 
-            blocks = config['blocks']
-            data_for_trend = historical_data[:-1] if len(historical_data) > 0 else [] 
-            slope, intercept, start_index = calculate_trendline(data_for_trend, blocks)
+    # RITA TRENDLINJER (Endast de som har source='5min' och show_line=True)
+    for key in selected_trends:
+        config = TREND_WINDOWS.get(key)
+        # Kontrollera om konfigurationen finns, om linjen ska visas, och om källan är 5min (eftersom grafen visar 5min historik)
+        if not config or not config.get('show_line', False) or config.get('source') != '5min':
+            continue
             
-            if slope is not None and start_index is not None:
-                trend_x_indices = np.arange(blocks)
-                trend_y_eur = slope * trend_x_indices + intercept
-                
-                # --- KONVERTERING AV TRENDLINJE TILL DEN VALDA BASVALUTAN ---
-                if currency == 'SEK':
-                    trend_y_display = trend_y_eur * eur_to_sek
-                elif currency == 'EUR':
-                    trend_y_display = trend_y_eur
-                else: # Crypto bas
-                    if base_price_eur is not None and base_price_eur != 0:
-                        trend_y_display = trend_y_eur / base_price_eur
-                    else:
-                        trend_y_display = trend_y_eur 
-                # -------------------------------------------------------------
-                        
-                trend_times = times[start_index:start_index + blocks]
-                
-                figure.add_trace(go.Scatter(x=trend_times, y=trend_y_display, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dot'), hoverinfo='x+y'))
+        blocks = config['blocks']
+        if len(historical_data) >= blocks:
+            slope, intercept, start_idx = calculate_trendline(historical_data, blocks)
+            
+            # Konvertera trendlinjen till vald valuta
+            trend_y_eur = slope * np.arange(blocks) + intercept
+            
+            if currency == 'SEK':
+                trend_y = trend_y_eur * eur_to_sek
+            elif currency == 'EUR':
+                trend_y = trend_y_eur
+            elif base_price_eur is not None and base_price_eur != 0:
+                trend_y = trend_y_eur / base_price_eur
+            else:
+                trend_y = trend_y_eur
 
-    figure.update_layout(title=f'{coin_label} Prisutveckling mot {currency}', xaxis_title=f"Tid ({ohlc_interval} min)", yaxis_title=f"Pris ({currency})", template="plotly_white", margin=dict(l=40, r=40, t=40, b=40), height=400, hovermode="x unified", plot_bgcolor='white', paper_bgcolor='white', xaxis=dict(showgrid=False), yaxis=dict(gridcolor='#f0f0f0'))
+            trend_times = times[start_idx:]
+            
+            figure.add_trace(go.Scatter(
+                x=trend_times, 
+                y=trend_y, 
+                mode='lines', 
+                name=config['name'], 
+                line=dict(color=config['color'], width=2, dash='dash')
+            ))
+
+    # Layoutuppdatering
+    figure.update_layout(
+        title=f"Prisutveckling: {coin_label} ({ohlc_interval} min)",
+        xaxis_title="Tid (CET/CEST)",
+        yaxis_title=f"Pris ({currency})",
+        template="plotly_white",
+        height=500,
+        hovermode="x unified"
+    )
 
     return figure
 
-@app.callback(
-    Output('coin-dropdown', 'value'),
-    [Input({'type': 'summary-card', 'index': dash.dependencies.ALL}, 'n_clicks')],
-    [State({'type': 'summary-card', 'index': dash.dependencies.ALL}, 'id'),
-     State('coin-dropdown', 'value')],
-    prevent_initial_call=True
-)
-def update_dropdown_on_card_click(n_clicks, ids, current_dropdown_value):
-    """Uppdaterar rullgardinsmenyn när en rad i sammanfattningen klickas."""
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        raise dash.exceptions.PreventUpdate
-
-    triggered_input = ctx.triggered[0]
-    triggered_prop_id = triggered_input['prop_id'].split('.')[0]
-    
-    if triggered_input['value'] > 0 and '"type":"summary-card"' in triggered_prop_id:
-        try:
-            triggered_id_dict = json.loads(triggered_prop_id)
-            coin_symbol = triggered_id_dict['index']
-            return coin_symbol
-        except (json.JSONDecodeError, KeyError):
-            logger.error(f"Fel vid parsning av klick-ID: {triggered_prop_id}")
-            raise dash.exceptions.PreventUpdate
-    
-    raise dash.exceptions.PreventUpdate
-
-
 if __name__ == '__main__':
-    # Observera: För Render/deployment måste du ersätta debug=True med server.run() 
-    # och ställa in REDIS_URL/TELEGRAM_BOT_TOKEN som miljövariabler.
-    app.run_server(debug=True)
+    port = int(os.environ.get('PORT', 8050))
+    app.run_server(debug=False, host='0.0.0.0', port=port)

@@ -88,15 +88,15 @@ TIME_WINDOWS = {
     '30d': {'blocks': 30, 'interval': 1440},
 }
 
-# Konfiguration för Trendlinjer och H.V. beräkning
+# Konfiguration för Trendlinjer och H.V. beräkning (UPPDATERAD VIKTNING)
 TREND_WINDOWS = {
     '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3, 'source': '5min', 'show_line': True},
     '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 5, 'source': '5min', 'show_line': True},
     '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 3, 'source': '1day', 'show_line': False},
-    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 2, 'source': '1day', 'show_line': False},
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.75, 'source': '1day', 'show_line': False},
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.5, 'source': '1day', 'show_line': False},
 }
 
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)

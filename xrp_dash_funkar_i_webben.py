@@ -88,15 +88,15 @@ TIME_WINDOWS = {
     '30d': {'blocks': 30, 'interval': 1440},
 }
 
-# Konfiguration för Trendlinjer och H.V. beräkning
+# Konfiguration för Trendlinjer och H.V. beräkning (UPPDATERAD VIKTNING)
 TREND_WINDOWS = {
     '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3, 'source': '5min', 'show_line': True},
     '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 5, 'source': '5min', 'show_line': True},
     '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 3, 'source': '1day', 'show_line': False},
-    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 2, 'source': '1day', 'show_line': False},
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.75, 'source': '1day', 'show_line': False},
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.5, 'source': '1day', 'show_line': False},
 }
 
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
@@ -441,7 +441,7 @@ def check_and_send_trade_value_alerts(alert_data, r_instance):
                 key = f"tv_alert:{coin_symbol}:+{highest_threshold_met}"
                 if r_instance.set(key, 1, ex=TRADE_VALUE_DEBOUNCE_SECONDS, nx=True):
                     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
-                    msg = (f"🔥 **HÖGT HANDELSVÄRDE ALERT** 🔥\n"
+                    msg = (f"🔥 **HÖGT HANDELSVÄRDE** 🔥\n"
                            f"Valuta: *{coin_label} ({coin_symbol})*\n"
                            f"Aktuellt Pris: *{format_price_telegram(current_price_eur)} EUR*\n"
                            f"Handelsvärde ($H.V.$): **+{trade_value}** (Tröskel: +{highest_threshold_met})")
@@ -467,7 +467,7 @@ def check_and_send_alerts(alert_data, r_instance):
                 if threshold is not None:
                     key = f"alert:{coin_symbol}:{period}:+{threshold}"
                     if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
-                        msg = (f"🔥 **HÖGSTA PRISUPPGÅNG ALERT** 🔥\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *+{change_percent:.2f}%* ({period})")
+                        msg = (f"🚀 **HÖG PRISUPPGÅNG** 🚀\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *+{change_percent:.2f}%* ({period})")
                         send_telegram_message(msg)
                         logger.info(f"Telegram Alert: {coin_symbol} +{threshold}% ({period})")
             elif change_percent < 0:
@@ -475,7 +475,7 @@ def check_and_send_alerts(alert_data, r_instance):
                 if threshold is not None:
                     key = f"alert:{coin_symbol}:{period}:{threshold}"
                     if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
-                        msg = (f"🔻 **LÄGSTA PRISNEDGÅNG ALERT** 🔻\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *{change_percent:.2f}%* ({period})")
+                        msg = (f"🔻 **HÖG PRISNEDGÅNG** 🔻\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *{change_percent:.2f}%* ({period})")
                         send_telegram_message(msg)
                         logger.info(f"Telegram Alert: {coin_symbol} {threshold}% ({period})")
 
@@ -659,20 +659,13 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         high_display = high_eur * multiplier
         low_display = low_eur * multiplier
 
-    periods_col1, periods_col2 = ['30m', '1h', '3h'], ['6h', '12h', '18h'] 
-
+    # --- LOKAL HJÄLPFUNKTION (Uppdaterad för att mappa tidsnycklar) ---
     def create_change_row(period, value):
+        # Mappa tidsnyckel till önskat visningsnamn
+        display_name = {'7d': '7dgr', '30d': '30dgr', '30m': '30min'}.get(period, period)
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
-                        children=[html.Span(f"{period}:", style={'color': '#6c757d', 'flex': '0 0 40px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
-    
-    def create_trend_display_list(trend_keys):
-        return [
-            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
-                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
-                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
-            ])
-            for key in trend_keys if key in individual_trends 
-        ]
+                        children=[html.Span(f"{display_name.capitalize()}:", style={'color': '#6c757d', 'flex': '0 0 50px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
+    # --- SLUT LOKAL HJÄLPFUNKTION ---
         
     short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
     long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
@@ -720,7 +713,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         html.P("Prisrörelser (%) & 24h Intervall", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
         # 24h Hög/Låg
-        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': '1px dotted #dee2e6', 'fontSize': '0.9em'}, children=[
+        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': '1px solid #dee2e6', 'fontSize': '0.9em'}, children=[
             html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '5px'}, children=[
                 html.Span("Hög 24h:", style={'fontWeight': 'bold', 'color': 'green'}), 
                 html.Span(f"{format_price_display(high_display)} {currency}" if high_display is not None else "N/A", style={'color': 'green', 'fontWeight': '600'})
@@ -731,9 +724,17 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             ]),
         ]),
         
-        # Prisrörelser
+        # Prisrörelser (Ny layout)
         html.Div(style={'paddingTop': '10px', 'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px 10px'}, children=[
-            create_change_row(p, format_change(percent_data.get(p))) for p in periods_col1 + periods_col2
+            # Ordning: 30min, 12h, 1h, 18h, 3h, 7dgr, 6h, 30dgr
+            create_change_row('30m', format_change(percent_data.get('30m'))),
+            create_change_row('12h', format_change(percent_data.get('12h'))),
+            create_change_row('1h', format_change(percent_data.get('1h'))),
+            create_change_row('18h', format_change(percent_data.get('18h'))),
+            create_change_row('3h', format_change(percent_data.get('3h'))),
+            create_change_row('7d', format_change(percent_data.get('7d'))), 
+            create_change_row('6h', format_change(percent_data.get('6h'))),
+            create_change_row('30d', format_change(percent_data.get('30d'))), 
         ])
     ])
 
@@ -742,10 +743,22 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         html.P("Trendvärden (Hₓ) - Riktning/Vikt", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
         html.P("Kort Sikt (5m data)", style={'margin': '0 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold'}),
-        html.Div(create_trend_display_list(short_term_keys)),
+        html.Div([
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
+                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
+            ])
+            for key in short_term_keys if key in individual_trends 
+        ]),
         
         html.P("Lång Sikt (1d data)", style={'margin': '10px 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold', 'borderTop': '1px dotted #dee2e6', 'paddingTop': '5px'}),
-        html.Div(create_trend_display_list(long_term_keys)),
+        html.Div([
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
+                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
+            ])
+            for key in long_term_keys if key in individual_trends 
+        ]),
     ])
 
     return html.Div(id='current-price-box', style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'}, children=[

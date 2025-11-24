@@ -104,7 +104,7 @@ ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
-# --- ALERT-TRÖSKLAR FÖR H.V. ---
+# --- ALERT-TRÖSKLAR FÖR H.V. (Uppdaterat) ---
 TRADE_VALUE_ALERTS = sorted([25, 50, 75, 100], reverse=True)
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
 
@@ -251,7 +251,8 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             'sort_24h': sort_key_24h
         })
 
-    summary_data.sort(key=lambda x: (x['sort_trade_value'], x['sort_3h'], x['sort_24h']), reverse=True)
+    # Ändrad sortering Telegram: 24h, 3h, H.V.
+    summary_data.sort(key=lambda x: (x['sort_24h'], x['sort_3h'], x['sort_trade_value']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
     # Justera offset till sommar/vintertid
@@ -269,7 +270,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     header = (
         f"🌟 **MARKNADSSAMMANFATTNING** 🌟\n"
         f"Tid: *{now_local.strftime('%Y-%m-%d %H:%M:%S')} CET/CEST*\n\n"
-        f"Sorterad efter Handelsvärde (Vägt genomsnitt av trendavvikelse)."
+        f"Sorterad efter 24h, 3h sedan Handelsvärde."
     )
     
     table_header = (
@@ -594,10 +595,28 @@ def create_summary_row(symbol, label, price, percent_data, trade_value, currency
         row_style['backgroundColor'] = '#e6f7ff'
         row_style['border'] = '1px solid #0056b3'
     
-    # Pris i basvaluta
-    price_div = format_price_color_summary(price, percent_data.get('24h'))
+    # Ändring 4: Pris i basvaluta + 24h procentuell rörelse inom parentes
+    change_24h = percent_data.get('24h')
+    price_str = format_price_display(price)
     
-    # Skapa DIV:ar för varje kolumn
+    change_str = ""
+    change_color = '#495057'
+    if change_24h is not None:
+        if change_24h >= 0.01: 
+            change_color = '#28a745'
+            change_str = f" (+{change_24h:.2f}%)"
+        elif change_24h <= -0.01: 
+            change_color = '#dc3545'
+            change_str = f" ({change_24h:.2f}%)"
+        else:
+            change_str = f" ({change_24h:.2f}%)"
+
+    price_div = html.Div([
+        html.Span(price_str, style={'color': '#495057'}),
+        html.Span(change_str, style={'color': change_color, 'fontSize': '0.9em', 'fontWeight': 'normal'})
+    ], style={'flex': '0 0 140px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'})
+    
+    # Skapa DIV:ar för varje kolumn (inklusive ny kolumn 12h)
     cols = [
         html.Div(html.Span(f"{CRYPTO_EMOJIS.get(symbol, '')} {label}", style={'fontWeight': 'bold', 'color': '#0056b3' if is_selected else '#495057'}), style={'flex': '0 0 160px', 'paddingLeft': '5px'}),
         price_div, 
@@ -605,7 +624,8 @@ def create_summary_row(symbol, label, price, percent_data, trade_value, currency
         html.Div(format_change(percent_data.get('1h')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('3h')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('6h')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), # <-- NYTT FÄLT
+        html.Div(format_change(percent_data.get('12h')), style={'flex': '1', 'textAlign': 'right'}), # NY KOLUMN
+        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), 
         html.Div(format_change(percent_data.get('7d')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_change(percent_data.get('30d')), style={'flex': '1', 'textAlign': 'right'}),
         html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 80px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}),
@@ -886,19 +906,35 @@ def update_all_live_data(n, coin_symbol, currency):
         if currency == 'SEK': pb = pe * eur_to_sek if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
-        summary_data.append({'symbol': sl, 'label': label, 'price': pb, 'percent': pd, 'trade_value': tv_int, 'sort_tv': tv_int if tv_int else -float('inf'), 's30': pd.get('30m', -float('inf')), 's1h': pd.get('1h', -float('inf')), 's6h': pd.get('6h', -float('inf'))})
+        # Lägg till sorteringsnycklar för 24h, 7d, 30d
+        summary_data.append({
+            'symbol': sl, 
+            'label': label, 
+            'price': pb, 
+            'percent': pd, 
+            'trade_value': tv_int, 
+            'sort_tv': tv_int if tv_int else -float('inf'), 
+            's30': pd.get('30m', -float('inf')), 
+            's1h': pd.get('1h', -float('inf')), 
+            's6h': pd.get('6h', -float('inf')),
+            'sort_24h': pd.get('24h', -float('inf')),
+            'sort_7d': pd.get('7d', -float('inf')),
+            'sort_30d': pd.get('30d', -float('inf'))
+        })
 
-    summary_data.sort(key=lambda x: (x['sort_tv'], x['s30'], x['s1h'], x['s6h']), reverse=True)
+    # Ändrad sortering Dash: 24h, 7dgr, 30dgr
+    summary_data.sort(key=lambda x: (x['sort_24h'], x['sort_7d'], x['sort_30d']), reverse=True)
     
-    # --- UPPDATERAT TABELLHUVUD FÖR ATT INKLUDERA 24H ---
+    # --- UPPDATERAT TABELLHUVUD FÖR ATT INKLUDERA 24H OCH 12H ---
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
     header_cols = [
         html.Div("Valuta", style={'flex': '0 0 160px', 'paddingLeft': '5px'}), 
-        html.Div(f"Pris ({currency})", style={'flex': '0 0 100px', 'textAlign': 'right'}), 
+        html.Div(f"Pris ({currency})", style={'flex': '0 0 140px', 'textAlign': 'right'}), # Breddat för att rymma pris + %
         html.Div("30m", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("1h", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("3h", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("6h", style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div("6h", style={'flex': '1', 'textAlign': 'right'}),
+        html.Div("12h", style={'flex': '1', 'textAlign': 'right'}), # NY KOLUMN
         html.Div("24h", style={'flex': '1', 'textAlign': 'right'}), # <-- NY KOLUMN
         html.Div("7d", style={'flex': '1', 'textAlign': 'right'}), 
         html.Div("30d", style={'flex': '1', 'textAlign': 'right'}), 

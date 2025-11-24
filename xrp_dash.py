@@ -659,20 +659,13 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         high_display = high_eur * multiplier
         low_display = low_eur * multiplier
 
-    periods_col1, periods_col2 = ['30m', '1h', '3h'], ['6h', '12h', '18h'] 
-
+    # --- LOKAL HJÄLPFUNKTION (Uppdaterad för att mappa tidsnycklar) ---
     def create_change_row(period, value):
+        # Mappa tidsnyckel till önskat visningsnamn
+        display_name = {'7d': '7dgr', '30d': '30dgr', '30m': '30min'}.get(period, period)
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
-                        children=[html.Span(f"{period}:", style={'color': '#6c757d', 'flex': '0 0 40px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
-    
-    def create_trend_display_list(trend_keys):
-        return [
-            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
-                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
-                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
-            ])
-            for key in trend_keys if key in individual_trends 
-        ]
+                        children=[html.Span(f"{display_name.capitalize()}:", style={'color': '#6c757d', 'flex': '0 0 50px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
+    # --- SLUT LOKAL HJÄLPFUNKTION ---
         
     short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
     long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
@@ -720,7 +713,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         html.P("Prisrörelser (%) & 24h Intervall", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
         # 24h Hög/Låg
-        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': '1px dotted #dee2e6', 'fontSize': '0.9em'}, children=[
+        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': '1px solid #dee2e6', 'fontSize': '0.9em'}, children=[
             html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '5px'}, children=[
                 html.Span("Hög 24h:", style={'fontWeight': 'bold', 'color': 'green'}), 
                 html.Span(f"{format_price_display(high_display)} {currency}" if high_display is not None else "N/A", style={'color': 'green', 'fontWeight': '600'})
@@ -731,9 +724,17 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             ]),
         ]),
         
-        # Prisrörelser
+        # Prisrörelser (Ny layout)
         html.Div(style={'paddingTop': '10px', 'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px 10px'}, children=[
-            create_change_row(p, format_change(percent_data.get(p))) for p in periods_col1 + periods_col2
+            # Ordning: 30min, 12h, 1h, 18h, 3h, 7dgr, 6h, 30dgr
+            create_change_row('30m', format_change(percent_data.get('30m'))),
+            create_change_row('12h', format_change(percent_data.get('12h'))),
+            create_change_row('1h', format_change(percent_data.get('1h'))),
+            create_change_row('18h', format_change(percent_data.get('18h'))),
+            create_change_row('3h', format_change(percent_data.get('3h'))),
+            create_change_row('7d', format_change(percent_data.get('7d'))), 
+            create_change_row('6h', format_change(percent_data.get('6h'))),
+            create_change_row('30d', format_change(percent_data.get('30d'))), 
         ])
     ])
 
@@ -742,10 +743,22 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         html.P("Trendvärden (Hₓ) - Riktning/Vikt", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
         html.P("Kort Sikt (5m data)", style={'margin': '0 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold'}),
-        html.Div(create_trend_display_list(short_term_keys)),
+        html.Div([
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
+                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
+            ])
+            for key in short_term_keys if key in individual_trends 
+        ]),
         
         html.P("Lång Sikt (1d data)", style={'margin': '10px 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold', 'borderTop': '1px dotted #dee2e6', 'paddingTop': '5px'}),
-        html.Div(create_trend_display_list(long_term_keys)),
+        html.Div([
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
+                html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+                html.Span(f"{individual_trends[key]:,.2f}" if individual_trends[key] is not None else "N/A", style={'color': '#006400' if (individual_trends[key] or 0) > 0 else '#8B0000' if (individual_trends[key] or 0) < 0 else '#6c757d', 'fontWeight': '600'})
+            ])
+            for key in long_term_keys if key in individual_trends 
+        ]),
     ])
 
     return html.Div(id='current-price-box', style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'}, children=[

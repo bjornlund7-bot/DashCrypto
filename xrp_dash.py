@@ -45,7 +45,7 @@ CRYPTO_PAIRS = {
     'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR',
     'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
     'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
-    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
+    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR', 'XNAP (SNAPX)': 'XNAP/EUR',
 }
 
 CRYPTO_EMOJIS = {
@@ -73,7 +73,7 @@ UPDATE_INTERVAL_SECONDS_DATA = 120
 OHLC_CACHE_INTERVAL_MIN = 5
 
 # Tidsintervall för schemalagd sammanställning (i 24-timmarsformat)
-SUMMARY_SCHEDULE_HOURS = [6, 9, 12, 15, 18, 21]
+SUMMARY_SCHEDULE_HOURS = [7, 9, 12, 15, 18, 21]
 REDIS_SUMMARY_KEY = 'summary_last_sent_time'
 
 TIME_WINDOWS = {
@@ -102,7 +102,7 @@ TREND_WINDOWS = {
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
 ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
-ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
+ALERT_DEBOUNCE_SECONDS = 2 * 3600 # 2 timmar
 
 TRADE_VALUE_ALERTS = sorted([25, 50, 75, 100], reverse=True)
 TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme

@@ -45,7 +45,9 @@ CRYPTO_PAIRS = {
     'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR',
     'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
     'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
-    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR',
+    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR', 'XNAP (SNAPX)': 'XNAP/EUR',
+    'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'XRP/EUR',
+    'AAVE (Aave)': 'AAVE/EUR', 'ONDO (Ondo)': 'ONDO/EUR', 'QNT (Quant)': 'QNT/EUR', 'RENDER (Render)': 'RENDER/EUR',
 }
 
 CRYPTO_EMOJIS = {
@@ -73,7 +75,7 @@ UPDATE_INTERVAL_SECONDS_DATA = 120
 OHLC_CACHE_INTERVAL_MIN = 5
 
 # Tidsintervall för schemalagd sammanställning (i 24-timmarsformat)
-SUMMARY_SCHEDULE_HOURS = [6, 9, 12, 15, 18, 21]
+SUMMARY_SCHEDULE_HOURS = [7, 9, 12, 15, 18, 21]
 REDIS_SUMMARY_KEY = 'summary_last_sent_time'
 
 TIME_WINDOWS = {
@@ -90,11 +92,11 @@ TIME_WINDOWS = {
 
 # Konfiguration för Trendlinjer och H.V. beräkning
 TREND_WINDOWS = {
-    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 5, 'source': '5min', 'show_line': True},
-    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 5, 'source': '5min', 'show_line': True},
+    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 4, 'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2, 'source': '5min', 'show_line': True},
     '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.75, 'source': '1day', 'show_line': False},
     '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.5, 'source': '1day', 'show_line': False},
 }
@@ -102,10 +104,10 @@ TREND_WINDOWS = {
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
 ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
-ALERT_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
+ALERT_DEBOUNCE_SECONDS = 2 * 3600 # 2 timmar
 
-TRADE_VALUE_ALERTS = sorted([25, 50, 75, 100], reverse=True)
-TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
+TRADE_VALUE_ALERTS = sorted([50, 75, 100, 150], reverse=True)
+TRADE_VALUE_DEBOUNCE_SECONDS = 2 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]
 REDIS_URL = os.environ.get('REDIS_URL')
@@ -927,7 +929,15 @@ def update_all_live_data(n, coin_symbol, currency):
             'sort_30d': pd.get('30d', -float('inf'))
         })
 
-    summary_data.sort(key=lambda x: (x['sort_24h'], x['sort_7d'], x['sort_30d']), reverse=True)
+    summary_data.sort(
+        key=lambda x: (
+            x['sort_24h'] if x['sort_24h'] is not None else -float('inf'),
+            x['sort_7d'] if x['sort_7d'] is not None else -float('inf'),
+            x['sort_30d'] if x['sort_30d'] is not None else -float('inf')
+        ), 
+        reverse=True
+    )
+
     
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
     header_cols = [

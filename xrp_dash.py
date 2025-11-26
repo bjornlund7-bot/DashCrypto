@@ -92,11 +92,11 @@ TIME_WINDOWS = {
 
 # Konfiguration för Trendlinjer och H.V. beräkning
 TREND_WINDOWS = {
-    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 3, 'source': '5min', 'show_line': True},
-    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 5, 'source': '5min', 'show_line': True},
-    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 5, 'source': '5min', 'show_line': True},
-    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 5, 'source': '5min', 'show_line': True},
+    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 4, 'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2, 'source': '5min', 'show_line': True},
     '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.75, 'source': '1day', 'show_line': False},
     '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.5, 'source': '1day', 'show_line': False},
 }
@@ -106,8 +106,8 @@ ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
 ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
 ALERT_DEBOUNCE_SECONDS = 2 * 3600 # 2 timmar
 
-TRADE_VALUE_ALERTS = sorted([25, 50, 75, 100], reverse=True)
-TRADE_VALUE_DEBOUNCE_SECONDS = 1 * 3600 # 1 timme
+TRADE_VALUE_ALERTS = sorted([50, 75, 100, 150], reverse=True)
+TRADE_VALUE_DEBOUNCE_SECONDS = 2 * 3600 # 1 timme
 
 # [REDIS KONFIGURATION]
 REDIS_URL = os.environ.get('REDIS_URL')

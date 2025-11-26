@@ -929,7 +929,15 @@ def update_all_live_data(n, coin_symbol, currency):
             'sort_30d': pd.get('30d', -float('inf'))
         })
 
-    summary_data.sort(key=lambda x: (x['sort_24h'], x['sort_7d'], x['sort_30d']), reverse=True)
+    summary_data.sort(
+        key=lambda x: (
+            x['sort_24h'] if x['sort_24h'] is not None else -float('inf'),
+            x['sort_7d'] if x['sort_7d'] is not None else -float('inf'),
+            x['sort_30d'] if x['sort_30d'] is not None else -float('inf')
+        ), 
+        reverse=True
+    )
+
     
     header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
     header_cols = [

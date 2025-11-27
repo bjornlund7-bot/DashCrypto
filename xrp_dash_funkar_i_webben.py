@@ -46,7 +46,7 @@ CRYPTO_PAIRS = {
     'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
     'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
     'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR', 'XNAP (SNAPX)': 'XNAP/EUR',
-    'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'XRP/EUR',
+    'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'TON/EUR',
     'AAVE (Aave)': 'AAVE/EUR', 'ONDO (Ondo)': 'ONDO/EUR', 'QNT (Quant)': 'QNT/EUR', 'RENDER (Render)': 'RENDER/EUR',
 }
 
@@ -88,6 +88,9 @@ TIME_WINDOWS = {
     '24h': {'blocks': 288, 'interval': OHLC_CACHE_INTERVAL_MIN},
     '7d': {'blocks': 7, 'interval': 1440},
     '30d': {'blocks': 30, 'interval': 1440},
+    # NYA FÖNSTER
+    '6m': {'blocks': 180, 'interval': 1440},
+    '1y': {'blocks': 365, 'interval': 1440},
 }
 
 # Konfiguration för Trendlinjer och H.V. beräkning
@@ -97,9 +100,13 @@ TREND_WINDOWS = {
     '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
     '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3, 'source': '5min', 'show_line': True},
     '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2, 'source': '5min', 'show_line': True},
-    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 0.75, 'source': '1day', 'show_line': False},
-    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.5, 'source': '1day', 'show_line': False},
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 1, 'source': '1day', 'show_line': False},
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.4, 'source': '1day', 'show_line': False},
+    # NYA TRENDER MED VIKT 0.2 OCH 1 DAY SOURCE
+    '6m': {'blocks': 180, 'color': '#17becf', 'name': 'Trend (6m)', 'weight': 0.2, 'source': '1day', 'show_line': False},
+    '1y': {'blocks': 365, 'color': '#bcbd22', 'name': 'Trend (1år)', 'weight': 0.1, 'source': '1day', 'show_line': False},
 }
+
 
 ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
 ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
@@ -202,7 +209,7 @@ def calculate_trade_value(short_term_data, current_price_eur, long_term_data=Non
         if V is not None and V != 0:
             Hx = (((Tx - V) / V) * 100) * weight
             trade_value += Hx
-            # HÄR ÄR ÄNDRINGEN: Sparar en dict med både värde och pris
+            # Sparar dict med både värde och pris för trendlinjerna
             individual_trends[key] = {'val': Hx, 'price': Tx} 
         else:
             individual_trends[key] = None
@@ -219,6 +226,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         price_eur = data.get(f'{coin_symbol_loop}/EUR')
         percent_data_loop = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol_loop, {})
         
+        # Återanvänd cachead data
         ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{ticker}'
         hist_data_5min_json = r.get(ohlc_cache_key) if r else None
         hist_data_5min = json.loads(hist_data_5min_json) if hist_data_5min_json else []
@@ -229,6 +237,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
         
         trade_value_int = None
         if hist_data_5min and price_eur is not None:
+            # Lägger till aktuell data för Trade Value beräkningen
             h_5min = hist_data_5min.copy()
             h_5min.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
             h_1day = hist_data_1day.copy()
@@ -238,6 +247,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             if trade_value is not None:
                 trade_value_int = int(round(trade_value))
 
+        # FIX: Säkra upp sortering mot None
         sort_key_3h = percent_data_loop.get('3h') if percent_data_loop.get('3h') is not None else -float('inf')
         sort_key_24h = percent_data_loop.get('24h') if percent_data_loop.get('24h') is not None else -float('inf')
         sort_trade_value = trade_value_int if trade_value_int is not None else -float('inf')
@@ -252,6 +262,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             'sort_24h': sort_key_24h
         })
 
+    # FIX: Använd de säkra sort-nycklarna här
     summary_data.sort(key=lambda x: (x['sort_24h'], x['sort_3h'], x['sort_trade_value']), reverse=True)
     
     now_utc = datetime.now(timezone.utc)
@@ -341,6 +352,8 @@ def fetch_crypto_data():
     except Exception as e:
         logger.error(f"❌ Error fetching/processing ticker data: {e}")
         return DEFAULT_DATA 
+
+# --- Del 2 Start ---
 
 def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
     time_ago = int(time.time()) - periods_ago_seconds 
@@ -497,16 +510,17 @@ def background_data_fetch(redis_instance):
                 coin_symbol = label.split(' ')[0]
                 current_price_eur = new_data.get(f'{coin_symbol}/EUR')
                 if current_price_eur is None: continue
-                    
+                        
                 periods_ago_24h = 86400 
                 ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                 if ohlc_5min_data:
                      redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
 
-                periods_ago_30d = 2592000 
-                ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_30d) 
+                # Fetch 1-day OHLC data for long-term trends (6m and 1y). Need enough data for 1 year (365 days)
+                periods_ago_1y = 365 * 86400 * 1.1 # 1.1 years buffer
+                ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_1y) 
                 if ohlc_1day_data:
-                    redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
+                     redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
 
                 trade_value_int = None
                 if ohlc_5min_data and ohlc_1day_data:
@@ -519,6 +533,7 @@ def background_data_fetch(redis_instance):
                     if trade_value is not None:
                         trade_value_int = int(round(trade_value))
                 
+                # Short-term changes (using 5-minute OHLC data)
                 if ohlc_5min_data:
                     prices_eur = [item['price'] for item in ohlc_5min_data]
                     if prices_eur:
@@ -528,6 +543,7 @@ def background_data_fetch(redis_instance):
                 else:
                     percent_changes = {}
 
+                # Long-term changes (using 1-day OHLC data, now including 6m/1y)
                 long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
                 long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
                 
@@ -652,7 +668,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         low_display = low_eur * multiplier
 
     def create_change_row(period, value):
-        display_name = {'7d': '7dgr', '30d': '30dgr', '30m': '30min'}.get(period, period)
+        display_name = {'7d': '7dgr', '30d': '30dgr', '6m': '6mån', '1y': '1år', '30m': '30min'}.get(period, period)
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
                         children=[html.Span(f"{display_name.capitalize()}:", style={'color': '#6c757d', 'flex': '0 0 50px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
         
@@ -688,6 +704,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         ])
     ])
 
+    # Sektion för Prisrörelser (UPPDATERAD med 6m/1y)
     changes_section = html.Div(style={'flex': '1 1 250px', 'minWidth': '250px', 'padding': '0 15px', 'borderLeft': '1px solid #dee2e6'}, children=[
         html.P("Prisrörelser (%) & 24h Intervall", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
@@ -704,13 +721,16 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         
         html.Div(style={'paddingTop': '10px', 'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px 10px'}, children=[
             create_change_row('30m', format_change(percent_data.get('30m'))),
-            create_change_row('12h', format_change(percent_data.get('12h'))),
-            create_change_row('1h', format_change(percent_data.get('1h'))),
             create_change_row('18h', format_change(percent_data.get('18h'))),
-            create_change_row('3h', format_change(percent_data.get('3h'))),
+            create_change_row('1h', format_change(percent_data.get('1h'))),
             create_change_row('7d', format_change(percent_data.get('7d'))), 
+            create_change_row('3h', format_change(percent_data.get('3h'))),
+            create_change_row('30d', format_change(percent_data.get('30d'))),
             create_change_row('6h', format_change(percent_data.get('6h'))),
-            create_change_row('30d', format_change(percent_data.get('30d'))), 
+            create_change_row('6m', format_change(percent_data.get('6m'))),
+            create_change_row('12h', format_change(percent_data.get('12h'))),
+            create_change_row('1y', format_change(percent_data.get('1y'))),
+
         ])
     ])
 
@@ -744,6 +764,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         ])
     # -------------------------------------------------
 
+    # Sektion för Trendvärden (UPPDATERAD med 6m/1y)
     trend_section = html.Div(style={'flex': '1 1 200px', 'minWidth': '200px', 'paddingLeft': '15px', 'borderLeft': '1px solid #dee2e6'}, children=[
         html.P("Trendvärden (Hₓ) - Riktning/Vikt", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
@@ -907,6 +928,7 @@ def update_all_live_data(n, coin_symbol, currency):
         
         tv_int = None
         if h5 and pe:
+            # Re-calculate TV for summary table sorting only
             tv_val, _ = calculate_trade_value(h5 + [{'time': timestamp, 'price': pe}], pe, h1 + [{'time': timestamp, 'price': pe}])
             if tv_val is not None: tv_int = int(round(tv_val))
         
@@ -914,13 +936,14 @@ def update_all_live_data(n, coin_symbol, currency):
         if currency == 'SEK': pb = pe * eur_to_sek if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
+        # FIX: Säkra upp hämtning av värden för sortering
         summary_data.append({
             'symbol': sl, 
             'label': label, 
             'price': pb, 
             'percent': pd, 
             'trade_value': tv_int, 
-            'sort_tv': tv_int if tv_int else -float('inf'), 
+            'sort_tv': tv_int, # Håll denna som None/float
             's30': pd.get('30m', -float('inf')), 
             's1h': pd.get('1h', -float('inf')), 
             's6h': pd.get('6h', -float('inf')),
@@ -929,6 +952,7 @@ def update_all_live_data(n, coin_symbol, currency):
             'sort_30d': pd.get('30d', -float('inf'))
         })
 
+    # FIX: Uppdaterad sorteringslogik för att hantera None säkert
     summary_data.sort(
         key=lambda x: (
             x['sort_24h'] if x['sort_24h'] is not None else -float('inf'),
@@ -1013,9 +1037,9 @@ def update_dropdown_selection(n_clicks, initial_coin, ids):
         return initial_coin if initial_coin else dash.no_update
     
     if isinstance(trigger, dict) and trigger.get('type') == 'summary-card':
-         if not any(n_clicks): return dash.no_update
-         return trigger['index']
-         
+          if not any(n_clicks): return dash.no_update
+          return trigger['index']
+          
     return dash.no_update
 
 if __name__ == '__main__':

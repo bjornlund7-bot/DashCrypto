@@ -476,7 +476,7 @@ def check_and_send_alerts(alert_data, r_instance):
             if change_percent > 0:
                 threshold = next((t for t in ALERT_THRESHOLDS_UP if change_percent >= t), None)
                 if threshold is not None:
-                    key = f"alert:{coin_symbol}:{period}:+{threshold}"
+                    key = f"alert:{coin_symbol}:+{period}:{threshold}"
                     if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
                         msg = (f"🚀 **HÖG PRISUPPGÅNG** 🚀\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *+{change_percent:.2f}%* ({period})")
                         send_telegram_message(msg)
@@ -811,6 +811,8 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             dcc.Store(id='chart-data-store'), 
             dcc.Store(id='current-currency-store'),
             dcc.Store(id='initial-coin-symbol-store', data=DEFAULT_COIN_SYMBOL),
+            # --- NY STORE FÖR SORTERING ---
+            dcc.Store(id='table-sort-store', data={'key': 'sort_tv', 'asc': False}), 
         ]),
         
         html.Div(style={'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
@@ -852,6 +854,27 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
 ])
 
+# --- NY CALLBACK FÖR ATT UPPDATERA SORTERINGEN ---
+@app.callback(
+    Output('table-sort-store', 'data'),
+    Input({'type': 'sort-header', 'index': ALL}, 'n_clicks'),
+    State('table-sort-store', 'data'),
+    prevent_initial_call=True
+)
+def update_table_sort_store(n_clicks, current_sort):
+    ctx_triggered = ctx.triggered_id
+    if not ctx_triggered or not any(n_clicks):
+        return dash.no_update
+    
+    clicked_key = ctx_triggered['index']
+    
+    # Om vi klickar på samma kolumn, byt riktning
+    if clicked_key == current_sort['key']:
+        return {'key': clicked_key, 'asc': not current_sort['asc']}
+    
+    # Om ny kolumn, sätt den som ny nyckel och standardisera till fallande för siffror
+    return {'key': clicked_key, 'asc': False}
+
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
     Output('last-updated', 'children'),
@@ -860,9 +883,14 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     Output('crypto-summary', 'children'),
     [Input('interval-component', 'n_intervals'), 
      Input('coin-dropdown', 'value'), 
-     Input('currency-dropdown', 'value')]
+     Input('currency-dropdown', 'value'),
+     Input('table-sort-store', 'data')] # <--- NY INPUT HÄR
 )
-def update_all_live_data(n, coin_symbol, currency):
+def update_all_live_data(n, coin_symbol, currency, sort_settings):
+    # Hantera om sort_settings saknas vid första laddning
+    if not sort_settings:
+        sort_settings = {'key': 'sort_tv', 'asc': False}
+
     data = get_data_from_redis()
     if data is None or 'EUR_SEK_RATE' not in data:
         loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, None, None, {}, None, {}, None)
@@ -929,7 +957,6 @@ def update_all_live_data(n, coin_symbol, currency):
         
         tv_int = None
         if h5 and pe:
-            # Re-calculate TV for summary table sorting only
             tv_val, _ = calculate_trade_value(h5 + [{'time': timestamp, 'price': pe}], pe, h1 + [{'time': timestamp, 'price': pe}])
             if tv_val is not None: tv_int = int(round(tv_val))
         
@@ -937,50 +964,101 @@ def update_all_live_data(n, coin_symbol, currency):
         if currency == 'SEK': pb = pe * eur_to_sek if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
-        # FIX: Säkra upp hämtning av värden för sortering
+        # --- FÖRENKLAD DATASTRUKTUR FÖR SORTERING ---
         summary_data.append({
             'symbol': sl, 
             'label': label, 
             'price': pb, 
             'percent': pd, 
             'trade_value': tv_int, 
-            'sort_tv': tv_int, # Håll denna som None/float
-            's30': pd.get('30m', -float('inf')), 
-            's1h': pd.get('1h', -float('inf')), 
-            's6h': pd.get('6h', -float('inf')),
-            'sort_24h': pd.get('24h', -float('inf')),
-            'sort_7d': pd.get('7d', -float('inf')),
-            'sort_30d': pd.get('30d', -float('inf'))
+            
+            # Platta nycklar för sortering
+            'sort_symbol': sl,
+            'sort_price': pb if pb is not None else -1,
+            'sort_tv': tv_int if tv_int is not None else -9999,
+            's30': pd.get('30m') if pd.get('30m') is not None else -9999,
+            's1h': pd.get('1h') if pd.get('1h') is not None else -9999,
+            's3h': pd.get('3h') if pd.get('3h') is not None else -9999,
+            's6h': pd.get('6h') if pd.get('6h') is not None else -9999,
+            's12h': pd.get('12h') if pd.get('12h') is not None else -9999,
+            's24h': pd.get('24h') if pd.get('24h') is not None else -9999,
+            's7d': pd.get('7d') if pd.get('7d') is not None else -9999,
+            's30d': pd.get('30d') if pd.get('30d') is not None else -9999
         })
 
-    # FIX: Uppdaterad sorteringslogik för att hantera None säkert
+    # --- DYNAMISK SORTERING ---
+    sort_key = sort_settings['key']
+    sort_asc = sort_settings['asc']
+    
+    # Sortera datan
     summary_data.sort(
-        key=lambda x: (
-            x['sort_24h'] if x['sort_24h'] is not None else -float('inf'),
-            x['sort_7d'] if x['sort_7d'] is not None else -float('inf'),
-            x['sort_30d'] if x['sort_30d'] is not None else -float('inf')
-        ), 
-        reverse=True
+        key=lambda x: x.get(sort_key, -9999), 
+        reverse=not sort_asc
     )
 
-    
-    header_style = {'display': 'flex', 'justifyContent': 'space-between', 'fontWeight': 'bold', 'padding': '7px 0', 'borderBottom': '2px solid #0056b3', 'backgroundColor': '#f0f0f0', 'marginBottom': '5px', 'color': '#495057', 'fontSize': '0.85em'}
-    header_cols = [
-        html.Div("Valuta", style={'flex': '0 0 160px', 'paddingLeft': '5px'}), 
-        html.Div(f"Pris ({currency})", style={'flex': '0 0 140px', 'textAlign': 'right'}),
-        html.Div("30m", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("1h", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("3h", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("6h", style={'flex': '1', 'textAlign': 'right'}),
-        html.Div("12h", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("24h", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("7d", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("30d", style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div("H.V.", style={'flex': '0 0 80px', 'textAlign': 'right', 'paddingRight': '5px'})
+    # --- GENERERA KLICKBARA RUBRIKER ---
+    # Definiera kolumner: (Visningstext, Sorteringsnyckel, Bredd, Justering)
+    cols_config = [
+        ("Valuta", "sort_symbol", "160px", "left"),
+        (f"Pris ({currency})", "sort_price", "140px", "right"),
+        ("30m", "s30", "1", "right"),
+        ("1h", "s1h", "1", "right"),
+        ("3h", "s3h", "1", "right"),
+        ("6h", "s6h", "1", "right"),
+        ("12h", "s12h", "1", "right"),
+        ("24h", "s24h", "1", "right"),
+        ("7d", "s7d", "1", "right"),
+        ("30d", "s30d", "1", "right"),
+        ("H.V.", "sort_tv", "80px", "right")
     ]
     
+    header_cells = []
+    for label_text, sort_id, width_val, align_val in cols_config:
+        # Bestäm stil för rubriken
+        cell_style = {
+            'cursor': 'pointer', 
+            'userSelect': 'none',
+            'padding': '0 5px'
+        }
+        
+        # Flexhantering: Antingen fast bredd eller flex: 1
+        if "px" in width_val:
+            cell_style['flex'] = f'0 0 {width_val}'
+        else:
+            cell_style['flex'] = width_val
+            
+        cell_style['textAlign'] = align_val
+        
+        # Lägg till pil om det är denna kolumn som sorteras
+        display_text = label_text
+        if sort_id == sort_key:
+            arrow = " ▲" if sort_asc else " ▼"
+            display_text += arrow
+            cell_style['color'] = '#0056b3' # Markera aktiv sortering med blå färg
+            
+        header_cells.append(
+            html.Div(
+                display_text,
+                id={'type': 'sort-header', 'index': sort_id}, # Pattern matching ID
+                n_clicks=0,
+                style=cell_style
+            )
+        )
+
+    header_style = {
+        'display': 'flex', 
+        'justifyContent': 'space-between', 
+        'fontWeight': 'bold', 
+        'padding': '7px 0', 
+        'borderBottom': '2px solid #0056b3', 
+        'backgroundColor': '#f0f0f0', 
+        'marginBottom': '5px', 
+        'color': '#495057', 
+        'fontSize': '0.85em'
+    }
+    
     rows = [create_summary_row(item['symbol'], item['label'], item['price'], item['percent'], item['trade_value'], currency, item['symbol'] == coin_symbol, eur_to_sek) for item in summary_data]
-    return summary_box, updated_text, chart_data_store, currency, html.Div([html.Div(header_cols, style=header_style)] + rows)
+    return summary_box, updated_text, chart_data_store, currency, html.Div([html.Div(header_cells, style=header_style)] + rows)
 
 @app.callback(
     Output('live-update-graph', 'figure'),

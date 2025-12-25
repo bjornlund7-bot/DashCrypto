@@ -75,6 +75,7 @@ UPDATE_INTERVAL_SECONDS_DATA = 120
 SUMMARY_SCHEDULE_HOURS = [7, 9, 12, 15, 18, 21]
 REDIS_SUMMARY_KEY = 'summary_last_sent_time'
 
+# Tidsfönster för beräkning av %-förändring
 TIME_WINDOWS = {
     '30m': {'blocks': 6, 'interval': 5},
     '1h': {'blocks': 12, 'interval': 5},
@@ -89,6 +90,7 @@ TIME_WINDOWS = {
     '1y': {'blocks': 365, 'interval': 1440},
 }
 
+# Trendlinjer (visas endast i 24h-vyn då de är baserade på 5min data)
 TREND_WINDOWS = {
     '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 5, 'source': '5min', 'show_line': True},
     '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 4, 'source': '5min', 'show_line': True},
@@ -432,6 +434,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'padding': '20px'}, c
             dcc.Dropdown(id='coin-dropdown', options=[{'label': k, 'value': k.split(' ')[0]} for k in COINS_LABELS], value=DEFAULT_COIN_SYMBOL),
             html.Label("Basvaluta:"),
             dcc.Dropdown(id='currency-dropdown', options=[{'label': c, 'value': c} for c in BASE_CURRENCIES], value='EUR'),
+            # Tillägg: Väljare för 24h eller 7d
             html.Label("Tidsfönster i graf:"),
             dcc.RadioItems(id='timespan-selector', options=[{'label': ' 24h (5m)', 'value': '24h'}, {'label': ' 7d (15m)', 'value': '7d'}], value='24h'),
         ]),
@@ -466,7 +469,7 @@ def update_sort(n, current):
      Input('coin-dropdown', 'value'), 
      Input('currency-dropdown', 'value'),
      Input('table-sort-store', 'data'),
-     Input('timespan-selector', 'value')]
+     Input('timespan-selector', 'value')] # Inkludera timespan-selector i input
 )
 def update_ui(n, coin_symbol, currency, sort, timespan):
     data = get_data_from_redis()
@@ -513,7 +516,7 @@ def update_ui(n, coin_symbol, currency, sort, timespan):
     # Skapa Graf
     ticker = CRYPTO_PAIRS[SYMBOL_TO_LABEL[coin_symbol]]
     # Välj rätt data baserat på växlaren
-    interval_val = 5 if timespan == '24h' else 15
+    interval_val = 5 if timespan == '24h' else 15 # Logik för att välja 5 eller 15 min
     ohlc_raw = r.get(f'OHLC_CACHED_{interval_val}MIN_{ticker}') if r else None
     hist_data = json.loads(ohlc_raw) if ohlc_raw else []
     

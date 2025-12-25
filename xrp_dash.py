@@ -419,9 +419,9 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         html.Div(children=[
             html.P(f"Hög 24h: {format_price_display(high_display)}", style={'color': 'green'}),
             html.P(f"Låg 24h: {format_price_display(low_display)}", style={'color': 'red'}),
-            html.P(f"1h: ", children=format_change(percent_data.get('1h'))),
-            html.P(f"24h: ", children=format_change(percent_data.get('24h'))),
-            html.P(f"7d: ", children=format_change(percent_data.get('7d'))),
+            html.P([html.Span("1h: "), format_change(percent_data.get('1h'))]),
+            html.P([html.Span("24h: "), format_change(percent_data.get('24h'))]),
+            html.P([html.Span("7d: "), format_change(percent_data.get('7d'))]),
         ])
     ])
 

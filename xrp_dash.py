@@ -11,48 +11,113 @@ import logging
 from redis import from_url, exceptions
 from scipy.stats import linregress
 import numpy as np
+from datetime import datetime, timezone, timedelta
 
-# --- Konfiguration & Logging ---
-logging.basicConfig(level=logging.INFO)
+# --- Konstanter, Logging och API Konfiguration ---
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.environ.get('REDIS_URL')
+# [KONSTANTER]
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
+KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
+EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# Samma par som tidigare
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
     'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR',
     'DOT (Polkadot)': 'DOT/EUR', 'DOGE (Dogecoin)': 'DOGE/EUR', 'PUMP (PUMP)': 'PUMP/EUR',
-    'AAVE (Aave)': 'AAVE/EUR', 'LINK (Chainlink)': 'LINK/EUR', 'SUI (SUI)': 'SUI/EUR',
-    'DASH (Dash)': 'DASH/EUR', 'ATOM (Cosmos)': 'ATOM/EUR', 'ADA (Cardano)': 'ADA/EUR',
-    'TRX (Tron)': 'TRX/EUR', 'LPT (LivePeer)': 'LPT/EUR', 'ALCX (Alchemix)': 'ALCX/EUR',
-    'AERO (Aerodrome Finance)': 'AERO/EUR', 'EUL (Euler)': 'EUL/EUR', 'IP (Story)': 'IP/EUR'
+    'Cookie DAO': 'COOKIE/EUR', 'Moonwalk (MF)': 'MF/EUR', 'YALA': 'YALA/EUR',
+    'WIF (dogwifhat)': 'WIF/EUR', 'YFI (Yearn Finance)': 'YFI/EUR', 'BNB (BNB Chain)': 'BNB/EUR',
+    'TRX (Tron)': 'TRX/EUR', 'PEPE (Pepe)': 'PEPE/EUR', 'LTC (Litecoin)': 'LTC/EUR',
+    'TRUMP (Official Trump)': 'TRUMP/EUR', 'XTZ (Tezos)': 'XTZ/EUR', 'DASH (Dash)': 'DASH/EUR',
+    'ZRO (LayerZero)': 'ZRO/EUR', 'WOO (Woo Network)': 'WOO/EUR', 'GALA (Gala Games)': 'GALA/EUR',
+    'SUI (SUI)': 'SUI/EUR', 'BCH (Bitcoin Cash)': 'BCH/EUR', 'ATOM (Cosmos)': 'ATOM/EUR',
+    'AVAX (Avalanche)': 'AVAX/EUR', 'ICP (Internet Computer Protocol)': 'ICP/EUR',
+    'ZEC (Zcash)': 'ZEC/EUR', '0G (ZeroGravity)': '0G/EUR', 'XDC (XDC Network)': 'XDC/EUR',
+    'UNI (Uniswap)': 'UNI/EUR', 'IP (Story)': 'IP/EUR', 'INJ (Injective)': 'INJ/EUR',
+    'AR (Arweave)': 'AR/EUR', 'EGLD (MultiversX)': 'EGLD/EUR', 'LPT (LivePeer)': 'LPT/EUR',
+    'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR',
+    'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
+    'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
+    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR', 'XNAP (SNAPX)': 'XNAP/EUR',
+    'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'TON/EUR',
+    'AAVE (Aave)': 'AAVE/EUR', 'ONDO (Ondo)': 'ONDO/EUR', 'QNT (Quant)': 'QNT/EUR', 'RENDER (Render)': 'RENDER/EUR',
+    'BRICK (Bricks)': 'BRICK/EUR',
 }
 
-CRYPTO_EMOJIS = {'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'ADA': '₳', 'DOT': '🟣', 'DOGE': '🐕'}
+CRYPTO_EMOJIS = {
+    'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳',
+    'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '🚀', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁',
+    'WIF': '🐶', 'YFI': '🚜', 'BNB': '🟡', 'TRX': '🌐', 'PEPE': '🐸', 'LTC': '🥈',
+    'TRUMP': '🦅', 'XTZ': '⚙️', 'DASH': '🪙', 'ZRO': '🔗', 'WOO': '🐻', 'GALA': '🎮',
+    'SUI': '💧', 'BCH': '🌱', 'ATOM': '⚛️', 'AVAX': '🔺', 'ICP': '💻', 'ZEC': '🦓',
+    '0G': '🌌', 'XDC': '🤝', 'UNI': '🦄', 'IP': '📖', 'INJ': '💉', 'AR': '📦',
+    'EGLD': '⚡', 'LPT': '🎥', 'KSM': '🐥', 'EUL': '🏛️', 'GMX': '🐻', 'AUCTION': '🔨',
+    'MOVR': '🌕', 'SSV': '🔐', 'MLN': '🧪', 'ALCX': '⚗️', 'AERO': '✈️', 'MYX': '🔄',
+    'GNO': '🦉',
+}
 
-# --- Redis Anslutning ---
+DEFAULT_PAIR_KEY = 'XRP (Ripple)'
+COINS_LABELS = list(CRYPTO_PAIRS.keys())
+SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
+
+# Tidsfönster för %-förändring
+TIME_WINDOWS = {
+    '30m': {'blocks': 6, 'interval': 5},
+    '1h': {'blocks': 12, 'interval': 5},
+    '3h': {'blocks': 36, 'interval': 5},
+    '6h': {'blocks': 72, 'interval': 5},
+    '12h': {'blocks': 144, 'interval': 5},
+    '18h': {'blocks': 216, 'interval': 5},
+    '24h': {'blocks': 288, 'interval': 5},
+    '7d': {'blocks': 7, 'interval': 1440},
+    '30d': {'blocks': 30, 'interval': 1440},
+}
+
+TREND_WINDOWS = {
+    '1h':  {'blocks': 12,  'weight': 5},
+    '3h':  {'blocks': 36,  'weight': 4},
+}
+
+# --- Redis ---
+REDIS_URL = os.environ.get('REDIS_URL')
 r = None
 if REDIS_URL:
     try:
         r = from_url(REDIS_URL)
         r.ping()
-        logger.info("Ansluten till Redis")
-    except Exception as e:
-        logger.error(f"Redis-fel: {e}")
+        logger.debug("✅ Ansluten till Redis!")
+    except exceptions.ConnectionError:
+        logger.error("❌ Redis-fel")
 
 # --- Hjälpfunktioner ---
 def format_price_display(p):
-    if p is None or p == 0: return "0,00"
-    if p < 1: return f"{p:.4f}".replace(".", ",")
-    return f"{p:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".")
+    if p is None: return "N/A"
+    return f"{p:,.4f}".replace(",", " ").replace(".", ",").replace(" ", ".")
 
 def format_change(c):
     if c is None: return html.Span("0,00%", style={'color': '#6c757d'})
-    color = '#28a745' if c > 0 else '#dc3545'
+    color = '#28a745' if c > 0 else '#dc3545' 
     symbol = '▲' if c > 0 else '▼'
     return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold'})
+
+def calculate_trade_value(short_term_data, current_price_eur):
+    if not short_term_data or current_price_eur is None: return 0.0
+    V = current_price_eur
+    trade_value = 0.0
+    for key, config in TREND_WINDOWS.items():
+        blocks = config['blocks']
+        if len(short_term_data) < blocks: continue
+        y = np.array([item['price'] for item in short_term_data[-blocks:]])
+        slope, intercept, _, _, _ = linregress(np.arange(blocks), y)
+        tx = slope * (blocks - 1) + intercept
+        trade_value += (((tx - V) / V) * 100) * config['weight']
+    return trade_value
 
 # --- Dash App ---
 app = dash.Dash(__name__)
@@ -62,31 +127,33 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'padding': '20px', 'f
     html.H1('📈 DJ-Investment Dashboard', style={'textAlign': 'center', 'color': '#0056b3'}),
     
     html.Div(style={'display': 'flex', 'gap': '20px'}, children=[
-        html.Div(style={'flex': '0 0 250px', 'backgroundColor': 'white', 'padding': '15px', 'borderRadius': '8px', 'border': '1px solid #ddd'}, children=[
+        html.Div(style={'flex': '0 0 250px', 'backgroundColor': 'white', 'padding': '15px', 'borderRadius': '10px', 'border': '1px solid #ddd'}, children=[
             html.H3("⚙️ Kontroller"),
             html.Label("Välj kryptovaluta:"),
-            dcc.Dropdown(id='coin-dropdown', options=[{'label': k, 'value': k.split(' ')[0]} for k in CRYPTO_PAIRS.keys()], value='XRP'),
+            dcc.Dropdown(id='coin-dropdown', options=[{'label': k, 'value': k.split(' ')[0]} for k in COINS_LABELS], value='XRP'),
             html.Br(),
-            html.Label("Basvaluta:"),
+            html.Label("Välj basvaluta:"),
             dcc.Dropdown(id='currency-dropdown', options=[{'label': 'EUR', 'value': 'EUR'}, {'label': 'SEK', 'value': 'SEK'}], value='EUR'),
             html.Br(),
-            html.Label("Tidsfönster:"),
-            dcc.RadioItems(id='timespan-selector', options=[{'label': ' 24h', 'value': '24h'}, {'label': ' 7d', 'value': '7d'}], value='24h'),
+            html.Label("Tidsfönster i graf:"),
+            dcc.RadioItems(id='timespan-selector', options=[
+                {'label': ' 24h (5m)', 'value': '24h'},
+                {'label': ' 7d (1h)', 'value': '7d'},
+                {'label': ' 30d (6h)', 'value': '30d'}
+            ], value='24h'),
         ]),
         html.Div(id='main-info-box', style={'flex': '1', 'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '20px', 'backgroundColor': 'white'})
     ]),
 
-    html.Div(style={'marginTop': '20px', 'backgroundColor': 'white', 'padding': '15px', 'borderRadius': '8px', 'border': '1px solid #ddd'}, children=[
+    html.Div(style={'marginTop': '20px', 'backgroundColor': 'white', 'padding': '15px', 'borderRadius': '10px', 'border': '1px solid #ddd'}, children=[
         dcc.Graph(id='live-update-graph', style={'height': '500px'})
     ]),
     
-    html.Div(id='crypto-summary-table', style={'marginTop': '20px', 'backgroundColor': 'white', 'borderRadius': '8px', 'border': '1px solid #ddd'}),
+    html.Div(id='crypto-summary-table', style={'marginTop': '20px'}),
     
     dcc.Store(id='table-sort-store', data={'key': 'H.V.', 'asc': False}),
-    dcc.Interval(id='interval-component', interval=30*1000) # Uppdatera var 30:e sekund
+    dcc.Interval(id='interval-component', interval=30*1000)
 ])
-
-# --- Callbacks ---
 
 @app.callback(
     Output('table-sort-store', 'data'),
@@ -94,12 +161,11 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'padding': '20px', 'f
     State('table-sort-store', 'data'),
     prevent_initial_call=True
 )
-def update_sort_state(n_clicks, current_sort):
+def update_sort(n, current):
     triggered = ctx.triggered_id
-    if not triggered or not any(n_clicks): return current_sort
-    new_key = triggered['index']
-    is_asc = not current_sort['asc'] if new_key == current_sort['key'] else False
-    return {'key': new_key, 'asc': is_asc}
+    if not triggered or not any(n): return current
+    key = triggered['index']
+    return {'key': key, 'asc': not current['asc'] if key == current['key'] else False}
 
 @app.callback(
     [Output('main-info-box', 'children'),
@@ -111,106 +177,94 @@ def update_sort_state(n_clicks, current_sort):
      Input('table-sort-store', 'data'),
      Input('timespan-selector', 'value')]
 )
-def update_ui(n, selected_coin, base_curr, sort_config, timespan):
-    # Hämta data från Redis med fallback
-    raw_data = r.get('crypto_data') if r else None
-    data = json.loads(raw_data) if raw_data else {"ALL_PERCENT_CHANGE": {}, "EUR_SEK_RATE": 11.0}
-    
-    all_changes = data.get('ALL_PERCENT_CHANGE', {})
+def update_ui(n, coin, currency, sort, timespan):
+    raw = r.get('crypto_data') if r else None
+    if not raw: return html.Div("Laddar..."), html.Div(), go.Figure()
+    data = json.loads(raw)
+
     eur_sek = data.get('EUR_SEK_RATE', 11.20)
+    all_changes = data.get('ALL_PERCENT_CHANGE', {})
     
-    # 1. Bygg Tabellen
-    headers = ["Valuta", "Pris (EUR)", "30m", "1h", "3h", "6h", "12h", "24h", "7d", "30d", "H.V."]
-    header_div = html.Div(style={'display': 'flex', 'fontWeight': 'bold', 'padding': '10px', 'borderBottom': '2px solid #ddd', 'backgroundColor': '#f0f0f0'}, children=[
-        html.Div(h, id={'type': 'sort-header', 'index': h}, style={'flex': '1', 'textAlign': 'center', 'cursor': 'pointer'}) for h in headers
-    ])
-
-    sortable_list = []
-    for label, ticker in CRYPTO_PAIRS.items():
-        sym = label.split(' ')[0]
-        price_eur = data.get(f'{sym}/EUR', 0)
-        c = all_changes.get(sym, {})
-        
-        # Simulera/Hämta Handelsvärde (H.V.)
-        hv_val = 0
-        # Om du har sparat trade_value i Redis, hämta det här:
-        # hv_val = data.get(f'{sym}/TRADE_VALUE', 0)
-
-        sortable_list.append({
-            "Valuta": f"{CRYPTO_EMOJIS.get(sym, '')} {label}",
-            "Pris (EUR)": price_eur,
-            "30m": c.get('30m', 0), "1h": c.get('1h', 0), "3h": c.get('3h', 0),
-            "6h": c.get('6h', 0), "12h": c.get('12h', 0), "24h": c.get('24h', 0),
-            "7d": c.get('7d', 0), "30d": c.get('30d', 0), "H.V.": hv_val, "raw_sym": sym
+    summary_data = []
+    for label in COINS_LABELS:
+        s = label.split(' ')[0]
+        ticker = CRYPTO_PAIRS[label]
+        pe = data.get(f'{s}/EUR', 0)
+        pd = all_changes.get(s, {})
+        h5 = json.loads(r.get(f'OHLC_CACHED_5MIN_{ticker}') or '[]') if r else []
+        tv = calculate_trade_value(h5, pe)
+        summary_data.append({
+            'Valuta': f"{CRYPTO_EMOJIS.get(s, '')} {label}", 'Pris (EUR)': pe,
+            '30m': pd.get('30m', 0), '1h': pd.get('1h', 0), '3h': pd.get('3h', 0),
+            '6h': pd.get('6h', 0), '12h': pd.get('12h', 0), '24h': pd.get('24h', 0),
+            '7d': pd.get('7d', 0), '30d': pd.get('30d', 0), 'H.V.': tv, 'raw_sym': s
         })
 
-    # Sortering
-    sk = sort_config['key']
-    sortable_list.sort(key=lambda x: x.get(sk, 0) if x.get(sk) is not None else -999, reverse=not sort_config['asc'])
+    summary_data.sort(key=lambda x: x.get(sort['key'], 0), reverse=not sort['asc'])
 
-    rows = []
-    for item in sortable_list:
-        is_sel = item['raw_sym'] == selected_coin
-        rows.append(html.Div(id={'type': 'summary-card', 'index': item['raw_sym']},
-            style={'display': 'flex', 'padding': '8px', 'borderBottom': '1px solid #eee', 'backgroundColor': '#e6f7ff' if is_sel else 'white', 'cursor': 'pointer'},
-            children=[
-                html.Div(item["Valuta"], style={'flex': '1', 'fontWeight': 'bold'}),
-                html.Div(format_price_display(item["Pris (EUR)"]), style={'flex': '1', 'textAlign': 'right'}),
-                *[html.Div(format_change(item[k]), style={'flex': '1', 'textAlign': 'right'}) for k in ["30m", "1h", "3h", "6h", "12h", "24h", "7d", "30d"]],
-                html.Div(f"▲ {item['H.V.']}", style={'flex': '1', 'textAlign': 'right', 'color': 'green', 'fontWeight': 'bold'})
-            ]
-        ))
+    headers = ["Valuta", "Pris (EUR)", "30m", "1h", "3h", "6h", "12h", "24h", "7d", "30d", "H.V."]
+    header_row = html.Div(style={'display': 'flex', 'fontWeight': 'bold', 'padding': '10px', 'backgroundColor': '#eee', 'borderBottom': '2px solid #ddd'}, children=[
+        html.Div(h, id={'type': 'sort-header', 'index': h}, style={'flex': '1', 'textAlign': 'center', 'cursor': 'pointer'}) for h in headers
+    ])
+    
+    rows = [html.Div(id={'type': 'summary-card', 'index': item['raw_sym']},
+        style={'display': 'flex', 'padding': '8px', 'borderBottom': '1px solid #eee', 'backgroundColor': '#e6f7ff' if item['raw_sym'] == coin else 'white', 'cursor': 'pointer'},
+        children=[
+            html.Div(item['Valuta'], style={'flex': '1', 'fontWeight': 'bold'}),
+            html.Div(format_price_display(item['Pris (EUR)']), style={'flex': '1', 'textAlign': 'right'}),
+            *[html.Div(format_change(item[k]), style={'flex': '1', 'textAlign': 'right'}) for k in headers[2:-1]],
+            html.Div(f"▲ {item['H.V.']:.0f}", style={'flex': '1', 'textAlign': 'right', 'color': 'green', 'fontWeight': 'bold'})
+        ]) for item in summary_data]
 
-    # 2. Bygg Huvudbox
-    sel_price = data.get(f'{selected_coin}/EUR', 0)
-    display_price = sel_price * (eur_sek if base_curr == 'SEK' else 1)
-    sel_c = all_changes.get(selected_coin, {})
+    sel_info = next(i for i in summary_data if i['raw_sym'] == coin)
+    curr_pe = data.get(f'{coin}/EUR', 0)
+    mult = eur_sek if currency == 'SEK' else 1
     
     main_box = html.Div(style={'display': 'flex', 'justifyContent': 'space-between'}, children=[
-        html.Div(style={'textAlign': 'center', 'flex': '1'}, children=[
-            html.H2(f"{CRYPTO_EMOJIS.get(selected_coin, '')} {selected_coin}"),
-            html.H1(f"{format_price_display(display_price)} {base_curr}", style={'color': '#28a745', 'fontSize': '3em'}),
-            html.H3(f"Handelsvärde: {item.get('H.V.', 0)}", style={'color': '#0056b3'})
+        html.Div(style={'flex': '1', 'textAlign': 'center'}, children=[
+            html.H2(f"{CRYPTO_EMOJIS.get(coin, '')} {coin}"),
+            html.H1(f"{format_price_display(curr_pe * mult)} {currency}", style={'color': '#28a745', 'fontSize': '2.5em'}),
+            html.H3(f"Handelsvärde: {sel_info['H.V.']:.2f}")
         ]),
-        html.Div(style={'flex': '1', 'padding': '0 20px', 'borderLeft': '1px solid #ddd', 'borderRight': '1px solid #ddd'}, children=[
-            html.H4("Prisrörelser (%)"),
+        html.Div(style={'flex': '1', 'borderLeft': '1px solid #ddd', 'borderRight': '1px solid #ddd', 'padding': '0 20px'}, children=[
+            html.H4("Prisrörelser (%)", style={'textAlign': 'center'}),
             html.Div(style={'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px'}, children=[
-                html.P(["30m: ", format_change(sel_c.get('30m'))]),
-                html.P(["24h: ", format_change(sel_c.get('24h'))]),
-                html.P(["1h: ", format_change(sel_c.get('1h'))]),
-                html.P(["7d: ", format_change(sel_c.get('7d'))]),
-                html.P(["3h: ", format_change(sel_c.get('3h'))]),
-                html.P(["30d: ", format_change(sel_c.get('30d'))]),
+                html.P(["30m: ", format_change(sel_info['30m'])]), html.P(["12h: ", format_change(sel_info['12h'])]),
+                html.P(["1h: ", format_change(sel_info['1h'])]), html.P(["24h: ", format_change(sel_info['24h'])]),
+                html.P(["3h: ", format_change(sel_info['3h'])]), html.P(["7d: ", format_change(sel_info['7d'])]),
+                html.P(["6h: ", format_change(sel_info['6h'])]), html.P(["30d: ", format_change(sel_info['30d'])]),
             ])
         ]),
         html.Div(style={'flex': '1', 'paddingLeft': '20px'}, children=[
-            html.H4("Trendvärden (Hx)"),
-            html.P("(1h): 0,38", style={'color': 'green'}),
-            html.P("(3h): -0,86", style={'color': 'red'}),
-            html.P("(24h): 0,49", style={'color': 'green'})
+            html.H4("Trend"),
+            html.P("(1h): 0.38", style={'color': 'green'}),
+            html.P("(3h): -0.86", style={'color': 'red'})
         ])
     ])
 
-    # 3. Graf
+    # Graf-logik för 24h (5m), 7d (1h), 30d (6h)
+    ticker = CRYPTO_PAIRS[SYMBOL_TO_LABEL[coin]]
+    # Här väljer vi rätt cache-nyckel baserat på valet i UI
+    if timespan == '24h':
+        cache_key = f'OHLC_CACHED_5MIN_{ticker}'
+    elif timespan == '7d':
+        cache_key = f'OHLC_CACHED_60MIN_{ticker}'
+    else: # 30d
+        cache_key = f'OHLC_CACHED_360MIN_{ticker}'
+
+    hist_raw = r.get(cache_key) if r else None
     fig = go.Figure()
-    # Hämta historik för grafen
-    ticker = CRYPTO_PAIRS.get(f"{selected_coin} (Ripple)", CRYPTO_PAIRS.get(next(k for k in CRYPTO_PAIRS if selected_coin in k)))
-    hist_raw = r.get(f'OHLC_CACHED_5MIN_{ticker}') if r else None
     if hist_raw:
         hist = json.loads(hist_raw)
-        x = [time.strftime('%H:%M', time.gmtime(i['time'])) for i in hist]
-        y = [i['price'] * (eur_sek if base_curr == 'SEK' else 1) for i in hist]
-        fig.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color='#0056b3', width=3), name="Pris"))
+        x = [datetime.fromtimestamp(i['time'], tz=timezone.utc) for i in hist]
+        y = [i['price'] * mult for i in hist]
+        fig.add_trace(go.Scatter(x=x, y=y, line=dict(color='#0056b3', width=2)))
     
     fig.update_layout(height=500, margin=dict(l=20, r=20, t=40, b=20), template="plotly_white")
 
-    return main_box, html.Div([header_div] + rows), fig
+    return main_box, html.Div([header_row] + rows), fig
 
-@app.callback(
-    Output('coin-dropdown', 'value'),
-    Input({'type': 'summary-card', 'index': ALL}, 'n_clicks'),
-    prevent_initial_call=True
-)
+@app.callback(Output('coin-dropdown', 'value'), Input({'type': 'summary-card', 'index': ALL}, 'n_clicks'), prevent_initial_call=True)
 def select_coin(n):
     if not any(n): return dash.no_update
     return ctx.triggered_id['index']

@@ -1,1538 +1,1126 @@
-import requests
-import time
-from datetime import datetime, timedelta
-import pandas as pd
-from dash import Dash, dcc, html, Input, Output, State
+import dash
+from dash import dcc, html, ctx, ALL
+from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
-import collections
+import time
+import threading
+import os
+import requests
+import json
+import logging
+#from redis import from_url, exceptions
 from scipy.stats import linregress
 import numpy as np
-import os
-import openpyxl
-from functools import lru_cache
-import itertools
-import threading
-from dash import exceptions
-import re
-import sys 
+from datetime import datetime, timezone, timedelta
 
-# --- Konstanter ---
+# --- Konstanter, Logging och API Konfiguration ---
+
+# Konfigurera logging
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    datefmt='%H:%M:%S')
+#logger = logging.getLogger(__name__)
+
+# [KONSTANTER]
+#TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+#TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-### ÄNDRING: Uppdaterade etiketter till EUR som standard ###
-# Lista över tillgängliga kryptopar och deras Kraken-tickers (baserade i EUR)
 CRYPTO_PAIRS = {
-    'XRP (Ripple)': 'XRPEUR',
-    'BTC (Bitcoin)': 'BTCEUR',
-    'ETH (Ethereum)': 'ETHEUR',
-    'SOL (Solana)': 'SOLEUR',
-    'GRASS (Grass)': 'GRASSEUR',
-    'ADA (Cardano)': 'ADAEUR',
-    'DOT (Polkadot)': 'DOTEUR',
-    'DOGE (Dogecoin)': 'DOGEEUR',
-    'PUMP (PUMP)': 'PUMPEUR',
-    'Cookie DAO': 'COOKIEEUR',
-    'Moonwalk (MF)': 'MFEUR', 
-    'YALA': 'YALAEUR', 
-    'WIF (dogwifhat)': 'WIFEUR',
-    'YFI (Yearn Finance)': 'YFIEUR',
-    'BNB (BNB Chain)': 'BNBEUR',
-    'TRX (Tron)': 'TRXEUR',
-    'PEPE (Pepe)': 'PEPEEUR',
-    'LTC (Litecoin)': 'LTCEUR',
-    'TRUMP (Official Trump)': 'TRUMPEUR',
-    'XTZ (Tezos)': 'XTZEUR',
-    'DASH (Dash)': 'DASHEUR',
-    'ZRO (LayerZero)': 'ZROEUR',
-    'WOO (Woo Network)': 'WOOEUR',
-    'GALA (Gala Games)': 'GALAEUR',
-    'SUI (SUI)': 'SUIEUR',
-    'BCH (Bitcoin Cash)': 'BCHEUR',
-    'ATOM (Cosmos)': 'ATOMEUR',
-    'AVAX (Avalanche)': 'AVAXEUR',
-    'ICP (Internet Computer Protocol)': 'ICPEUR',
-    'ZEC (Zcash)': 'ZECEUR',
-    '0G (ZeroGravity)': '0G/EUR', 
-    'XDC (XDC Network)': 'XDCEUR',
-    'UNI (Uniswap)': 'UNIEUR',
-    'IP (Story)': 'IPEUR',
-    'INJ (Injective)': 'INJEUR',
-    'AR (Arweave)': 'AREUR',
-    'EGLD (MultiversX)': 'EGLDEUR',
-    'LPT (LivePeer)': 'LPTEUR',
-    'KSM (Kusama)': 'KSMEUR',
-    'EUL (Euler)': 'EULEUR',
-    'GMX (GMX)': 'GMXEUR',
-    'AUCTION (Bounce)': 'AUCTIONEUR',
-    'MOVR (Moonriver)': 'MOVREUR',
-    'SSV (SSV Network)': 'SSVEUR',
-    'MLN (Enzyme Finance)': 'MLNEUR',
-    'ALCX (Alchemix)': 'ALCXEUR',
-    'AERO (Aerodrome Finance)': 'AEROEUR',
-    'MYX (MYX Finance)': 'MYXEUR',
-    'GNO (Gnosis)': 'GNOEUR',
+    'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
+    'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR',
+    'DOT (Polkadot)': 'DOT/EUR', 'DOGE (Dogecoin)': 'DOGE/EUR', 'PUMP (PUMP)': 'PUMP/EUR',
+    'Cookie DAO': 'COOKIE/EUR', 'Moonwalk (MF)': 'MF/EUR', 'YALA': 'YALA/EUR',
+    'WIF (dogwifhat)': 'WIF/EUR', 'YFI (Yearn Finance)': 'YFI/EUR', 'BNB (BNB Chain)': 'BNB/EUR',
+    'TRX (Tron)': 'TRX/EUR', 'PEPE (Pepe)': 'PEPE/EUR', 'LTC (Litecoin)': 'LTC/EUR',
+    'TRUMP (Official Trump)': 'TRUMP/EUR', 'XTZ (Tezos)': 'XTZ/EUR', 'DASH (Dash)': 'DASH/EUR',
+    'ZRO (LayerZero)': 'ZRO/EUR', 'WOO (Woo Network)': 'WOO/EUR', 'GALA (Gala Games)': 'GALA/EUR',
+    'SUI (SUI)': 'SUI/EUR', 'BCH (Bitcoin Cash)': 'BCH/EUR', 'ATOM (Cosmos)': 'ATOM/EUR',
+    'AVAX (Avalanche)': 'AVAX/EUR', 'ICP (Internet Computer Protocol)': 'ICP/EUR',
+    'ZEC (Zcash)': 'ZEC/EUR', '0G (ZeroGravity)': '0G/EUR', 'XDC (XDC Network)': 'XDC/EUR',
+    'UNI (Uniswap)': 'UNI/EUR', 'IP (Story)': 'IP/EUR', 'INJ (Injective)': 'INJ/EUR',
+    'AR (Arweave)': 'AR/EUR', 'EGLD (MultiversX)': 'EGLD/EUR', 'LPT (LivePeer)': 'LPT/EUR',
+    'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR',
+    'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
+    'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
+    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR', 'XNAP (SNAPX)': 'XNAP/EUR',
+    'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'TON/EUR',
+    'AAVE (Aave)': 'AAVE/EUR', 'ONDO (Ondo)': 'ONDO/EUR', 'QNT (Quant)': 'QNT/EUR', 'RENDER (Render)': 'RENDER/EUR',
+    'BRICK (Bricks)': 'BRICK/EUR',
 }
+
+CRYPTO_EMOJIS = {
+    'XRP': '🌊', 'BTC': '💰', 'ETH': '💎', 'SOL': '☀️', 'GRASS': '🌱', 'ADA': '₳',
+    'DOT': '🟣', 'DOGE': '🐕', 'PUMP': '🚀', 'COOKIE': '🍪', 'MF': '🚶', 'YALA': '🦁',
+    'WIF': '🐶', 'YFI': '🚜', 'BNB': '🟡', 'TRX': '🌐', 'PEPE': '🐸', 'LTC': '🥈',
+    'TRUMP': '🦅', 'XTZ': '⚙️', 'DASH': '🪙', 'ZRO': '🔗', 'WOO': '🐻', 'GALA': '🎮',
+    'SUI': '💧', 'BCH': '🌱', 'ATOM': '⚛️', 'AVAX': '🔺', 'ICP': '💻', 'ZEC': '🦓',
+    '0G': '🌌', 'XDC': '🤝', 'UNI': '🦄', 'IP': '📖', 'INJ': '💉', 'AR': '📦',
+    'EGLD': '⚡', 'LPT': '🎥', 'KSM': '🐥', 'EUL': '🏛️', 'GMX': '🐻', 'AUCTION': '🔨',
+    'MOVR': '🌕', 'SSV': '🔐', 'MLN': '🧪', 'ALCX': '⚗️', 'AERO': '✈️', 'MYX': '🔄',
+    'GNO': '🦉',
+}
+
 DEFAULT_PAIR_KEY = 'XRP (Ripple)'
-### SLUT PÅ ÄNDRING ###
+DEFAULT_COIN_SYMBOL = DEFAULT_PAIR_KEY.split(' ')[0]
 
-# Filnamn för permanent datalagring (XLSX)
-EXCEL_FILE_PATH = os.environ.get("EXCEL_FILE_PATH", "crypto_data_log.xlsx")
+COINS_LABELS = list(CRYPTO_PAIRS.keys())
+COINS_SYMBOLS = [label.split(' ')[0] for label in COINS_LABELS]
 
-# Inställningar för Dash
-UPDATE_INTERVAL_MS_WEB = 5000 # Snabbare intervall för ENBART webbuppdateringen (t.ex. 5 sek)
-UPDATE_INTERVAL_SECONDS_DATA = 60 # 60 sekunder - DATA HÄMTAS ENDAST I BAKGRUNDSTRÅDEN
-MAX_DASH_POINTS = 1440         # 24 h historik
-SUMMARY_TREND_POINTS_30M = 30    # 30 minuter
-SUMMARY_TREND_POINTS_360M = 360  # 360 minuter (6 timmar)
+BASE_CURRENCIES = ['EUR', 'SEK'] + [s for s in COINS_SYMBOLS]
+SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
 
-# SMA-fönster för grafen
-SMA_WINDOWS = [SUMMARY_TREND_POINTS_30M, MAX_DASH_POINTS, SUMMARY_TREND_POINTS_360M]
+UPDATE_INTERVAL_SECONDS_DATA = 120
+OHLC_CACHE_INTERVAL_MIN = 5
 
-# =========================================================================
-# === KONFIGURATION FÖR TELEGRAM (Användarens sparade tokens och chat-ID) ===
-TELEGRAM_BOT_TOKEN = '8266312220:AAEpAFiIsf9UjaoKUOR8TCroLJIyIAR5jM4' 
-TELEGRAM_CHAT_ID = '8342999996'    
-# =========================================================================
+# Tidsintervall för schemalagd sammanställning (i 24-timmarsformat)
+SUMMARY_SCHEDULE_HOURS = [7, 9, 12, 15, 18, 21]
+REDIS_SUMMARY_KEY = 'summary_last_sent_time'
 
-# --- Strategikonstanter ---
-DIFF_THRESHOLD = 21 # Signalvärdesdifferens
-REVERSION_THRESHOLD = 0.02 # 2% (0.02)
-
-# NYA SPIKE TRÖSKLAR (GÄLLER NU 30m, 100m, 360m OCH 24h)
-SPIKE_THRESHOLDS = {
-    '+100%': 100.0,
-    '+75%': 75.0,
-    '+50%': 50.0,
-    '+25%': 25.0,
-    '+10%': 10.0,
-    '-10%': -10.0,
-    '-25%': -25.0,
-    '-50%': -50.0,
-}
-# Sortera trösklar: högst till lägst värde
-SORTED_SPIKE_THRESHOLDS = sorted(SPIKE_THRESHOLDS.items(), key=lambda item: item[1], reverse=True)
-TIMEFRAMES_FOR_SPIKES = ['30m', '100m', '360m', '24h']
-
-
-# -------------------------------------------------------------
-app = Dash(__name__)
-
-# --- GLOBAL LAGER ---
-data_lock = threading.Lock()
-data_history = {pair: collections.deque(maxlen=max(SMA_WINDOWS)) for pair in CRYPTO_PAIRS.values()}
-global_kpi_cache = {}
-SENT_NOTIFICATIONS = {pair: 0 for pair in CRYPTO_PAIRS.values()}
-SENT_DIFF_NOTIFICATIONS = {}
-current_signal_ratings = {}
-
-# NY STRUKTUR FÖR SPIKE-NOTISER (Per Tidsram, Per Par, Per Tröskel)
-SENT_SPIKE_NOTIFICATIONS = {
-    tf: {
-        pair: {label: False for label in SPIKE_THRESHOLDS.keys()}
-        for pair in CRYPTO_PAIRS.values()
-    }
-    for tf in TIMEFRAMES_FOR_SPIKES
+TIME_WINDOWS = {
+    '30m': {'blocks': 6, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '1h': {'blocks': 12, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '3h': {'blocks': 36, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '6h': {'blocks': 72, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '12h': {'blocks': 144, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '18h': {'blocks': 216, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '24h': {'blocks': 288, 'interval': OHLC_CACHE_INTERVAL_MIN},
+    '7d': {'blocks': 7, 'interval': 1440},
+    '30d': {'blocks': 30, 'interval': 1440},
+    # NYA FÖNSTER
+    '6m': {'blocks': 180, 'interval': 1440},
+    '1y': {'blocks': 365, 'interval': 1440},
 }
 
-# För periodisk sammanfattning
-SUMMARY_SEND_TIMES = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] 
-LAST_SUMMARY_SENT = {hour: None for hour in SUMMARY_SEND_TIMES} 
+# Konfiguration för Trendlinjer och H.V. beräkning
+TREND_WINDOWS = {
+    '1h':  {'blocks': 12,  'color': '#ff7f0e', 'name': 'Trend (1h)',  'weight': 5, 'source': '5min', 'show_line': True},
+    '3h':  {'blocks': 36,  'color': '#2ca02c', 'name': 'Trend (3h)',  'weight': 4, 'source': '5min', 'show_line': True},
+    '6h':  {'blocks': 72,  'color': '#d62728', 'name': 'Trend (6h)',  'weight': 3, 'source': '5min', 'show_line': True},
+    '12h': {'blocks': 144, 'color': '#9467bd', 'name': 'Trend (12h)', 'weight': 3, 'source': '5min', 'show_line': True},
+    '18h': {'blocks': 216, 'color': '#8c564b', 'name': 'Trend (18h)', 'weight': 2, 'source': '5min', 'show_line': True},
+    '7d':  {'blocks': 7,   'color': '#e377c2', 'name': 'Trend (7d)',  'weight': 1, 'source': '1day', 'show_line': False},
+    '30d': {'blocks': 30,  'color': '#7f7f7f', 'name': 'Trend (30d)', 'weight': 0.4, 'source': '1day', 'show_line': False},
+    # NYA TRENDER MED VIKT 0.2 OCH 1 DAY SOURCE
+    '6m': {'blocks': 180, 'color': '#17becf', 'name': 'Trend (6m)', 'weight': 0.2, 'source': '1day', 'show_line': False},
+    '1y': {'blocks': 365, 'color': '#bcbd22', 'name': 'Trend (1år)', 'weight': 0.1, 'source': '1day', 'show_line': False},
+}
 
 
-### ÄNDRING: Omdöpt format_sek till format_price_sek och lagt till format_price_eur ###
-def format_price_sek(value):
-    """Formaterar ett tal till 4 decimaler med tusenavgränsare (mellanslag) i SEK-stil."""
-    if not isinstance(value, (int, float)) or np.isnan(value) or value is None:
-        return "N/A"
-    return f"{value:,.4f}".replace(",", " ").replace(".", ",")
+ALERT_THRESHOLDS_UP = sorted([10, 20, 30, 40, 50, 75, 100], reverse=True)
+ALERT_THRESHOLDS_DOWN = sorted([-10, -20, -25, -30, -50, -75])
+ALERT_PERIODS = ['30m', '1h', '3h', '6h', '12h', '24h']
+ALERT_DEBOUNCE_SECONDS = 2 * 3600 # 2 timmar
 
-def format_price_eur(value):
-    """Formaterar ett tal till 4 decimaler med tusenavgränsare (mellanslag) i EUR-stil."""
-    if not isinstance(value, (int, float)) or np.isnan(value) or value is None:
-        return "N/A"
-    # Använder standard . för decimaler för EUR
-    return f"{value:,.4f}".replace(",", " ")
+TRADE_VALUE_ALERTS = sorted([50, 75, 100, 150], reverse=True)
+TRADE_VALUE_DEBOUNCE_SECONDS = 2 * 3600 # 1 timme
 
-def format_percent(value):
-    """Formaterar en procentuell förändring med tecken och 2 decimaler."""
-    if value is None:
-        return "N/A %"
-    if not isinstance(value, (int, float)) or np.isnan(value):
-        return "N/A %"
-    return f"{value:+.2f} %"
-### SLUT PÅ ÄNDRING ###
-
-# --- TELEGRAM NOTIS FUNKTIONER ---
-
-def send_telegram_message(message_text):
-    """Generisk funktion för att skicka meddelanden via Telegram API."""
-    base_url = "https://api.telegram.org/bot{token}/sendMessage"
-    url = base_url.format(token=TELEGRAM_BOT_TOKEN)
-
-    payload = {
-        'chat_id': TELEGRAM_CHAT_ID,
-        'text': message_text,
-        'parse_mode': 'Markdown'
-    }
-
+# [REDIS KONFIGURATION]
+REDIS_URL = os.environ.get('REDIS_URL')
+r = None
+if REDIS_URL:
     try:
-        response = requests.post(url, data=payload, timeout=5)
+        r = from_url(REDIS_URL)
+        r.ping()
+        logger.debug("✅ Ansluten till Redis!")
+    except exceptions.ConnectionError as e:
+        logger.error(f"❌ Kunde inte ansluta till Redis: {e}")
+        r = None
+        
+DEFAULT_DATA = {
+    'XRP/EUR': 0.50, 'XRP/SEK': 5.50,
+    'timestamp': time.time(),
+    'EUR_SEK_RATE': 11.0,
+    'ALL_24H_RANGE_OHLC': {'XRP': {'high_eur': 0.52, 'low_eur': 0.48}},
+    'ALL_OHLC_CACHED': {},
+    'ALL_PERCENT_CHANGE': {},
+}
+
+# --- Hjälpfunktioner ---
+
+def format_price_display(p):
+    if p is None: return "N/A"
+    price_format = f"{p:,.8f}" if p < 0.1 else (f"{p:,.4f}" if p < 10 else f"{p:,.2f}")
+    return price_format.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
+
+def format_price_telegram(p):
+    if p is None: return "N/A"
+    if p < 10:
+        return f"{p:.4f}".replace(".", ",")
+    else:
+        return f"{p:,.2f}".replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
+
+def get_data_from_redis():
+    if r:
+        try:
+            cached_data = r.get('crypto_data')
+            if cached_data:
+                return json.loads(cached_data)
+        except exceptions.ConnectionError as e:
+            logger.error(f"Redis-anslutningsfel i callback: {e}")
+    return None
+
+def format_change_telegram(c):
+    if c is None: return " N/A "
+    sign = "+" if c >= 0 else ""
+    return f"{sign}{c:.2f}%".rjust(6)
+
+def format_trade_value_telegram(v):
+    if v is None: return " N/A "
+    sign = "+" if v >= 0 else ""
+    return f"{sign}{int(round(v))}".rjust(4)
+
+def calculate_trade_value(short_term_data, current_price_eur, long_term_data=None):
+    if not short_term_data or current_price_eur is None:
+        return None, {}
+
+    V = current_price_eur
+    trade_value = 0.0
+    individual_trends = {}
+    
+    for key, config in TREND_WINDOWS.items():
+        blocks = config['blocks']
+        weight = config['weight']
+        source = config.get('source', '5min')
+        
+        historical_data = None
+        if source == '5min':
+            historical_data = short_term_data
+        elif source == '1day':
+            historical_data = long_term_data
+            
+        if not historical_data:
+            individual_trends[key] = None
+            continue
+        
+        data_segment = historical_data[-blocks:] 
+        
+        if len(data_segment) < blocks:
+            individual_trends[key] = None
+            continue 
+
+        x_values = np.arange(blocks) 
+        y_values = np.array([item['price'] for item in data_segment])
+        
+        slope, intercept, _, _, _ = linregress(x_values, y_values)
+        Tx = slope * (blocks - 1) + intercept 
+        
+        if V is not None and V != 0:
+            Hx = (((Tx - V) / V) * 100) * weight
+            trade_value += Hx
+            # Sparar dict med både värde och pris för trendlinjerna
+            individual_trends[key] = {'val': Hx, 'price': Tx} 
+        else:
+            individual_trends[key] = None
+
+    return trade_value if trade_value is not None else None, individual_trends
+
+def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
+    summary_data = []
+    ohlc_interval = OHLC_CACHE_INTERVAL_MIN
+
+    for label in COINS_LABELS:
+        coin_symbol_loop = label.split(' ')[0]
+        ticker = CRYPTO_PAIRS[label]
+        price_eur = data.get(f'{coin_symbol_loop}/EUR')
+        percent_data_loop = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol_loop, {})
+        
+        # Återanvänd cachead data
+        ohlc_cache_key = f'OHLC_CACHED_{ohlc_interval}MIN_{ticker}'
+        hist_data_5min_json = r.get(ohlc_cache_key) if r else None
+        hist_data_5min = json.loads(hist_data_5min_json) if hist_data_5min_json else []
+
+        ohlc_1day_key = f'OHLC_1DAY_{ticker}'
+        hist_data_1day_json = r.get(ohlc_1day_key) if r else None
+        hist_data_1day = json.loads(hist_data_1day_json) if hist_data_1day_json else []
+        
+        trade_value_int = None
+        if hist_data_5min and price_eur is not None:
+            # Lägger till aktuell data för Trade Value beräkningen
+            h_5min = hist_data_5min.copy()
+            h_5min.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
+            h_1day = hist_data_1day.copy()
+            h_1day.append({'time': data.get('timestamp', time.time()), 'price': price_eur})
+            
+            trade_value, _ = calculate_trade_value(h_5min, price_eur, h_1day)
+            if trade_value is not None:
+                trade_value_int = int(round(trade_value))
+
+        # FIX: Säkra upp sortering mot None
+        sort_key_3h = percent_data_loop.get('3h') if percent_data_loop.get('3h') is not None else -float('inf')
+        sort_key_24h = percent_data_loop.get('24h') if percent_data_loop.get('24h') is not None else -float('inf')
+        sort_trade_value = trade_value_int if trade_value_int is not None else -float('inf')
+
+        summary_data.append({
+            'symbol': coin_symbol_loop,
+            'price_eur': price_eur,
+            'percent_data': percent_data_loop,
+            'trade_value_int': trade_value_int, 
+            'sort_trade_value': sort_trade_value, 
+            'sort_3h': sort_key_3h,
+            'sort_24h': sort_key_24h
+        })
+
+    # FIX: Använd de säkra sort-nycklarna här
+    summary_data.sort(key=lambda x: (x['sort_24h'], x['sort_3h'], x['sort_trade_value']), reverse=True)
+    
+    now_utc = datetime.now(timezone.utc)
+    offset = 1 
+    if now_utc.month in range(4, 10): 
+        offset = 2 
+    elif now_utc.month == 3 and now_utc.day > 24 and now_utc.weekday() == 6:
+        offset = 2
+    elif now_utc.month == 10 and now_utc.day > 24 and now_utc.weekday() == 6:
+        offset = 1 
+    
+    now_local = now_utc + timedelta(hours=offset)
+    
+    header = (
+        f"🌟 **MARKNADSSAMMANFATTNING** 🌟\n"
+        f"Tid: *{now_local.strftime('%Y-%m-%d %H:%M:%S')} CET/CEST*\n\n"
+        f"Sorterad efter 24h, 3h sedan Handelsvärde."
+    )
+    
+    table_header = (
+        "```"
+        "KRYPTO | PRIS EUR |  3H   |  24H  | H.V.\n"
+        "-----------------------------------------\n"
+    )
+    
+    table_rows = []
+    for item in summary_data:
+        symbol = item['symbol'].ljust(6)
+        
+        price_str = format_price_telegram(item['price_eur'])
+        price_display = price_str.rjust(8) 
+
+        change_3h = format_change_telegram(item['percent_data'].get('3h'))
+        change_24h = format_change_telegram(item['percent_data'].get('24h'))
+        
+        trade_value_str = format_trade_value_telegram(item['trade_value_int']) 
+        
+        row = f"{symbol} | {price_display} |{change_3h} |{change_24h} |{trade_value_str}"
+        table_rows.append(row)
+
+    table_body = "\n".join(table_rows)
+    table_footer = "```"
+    return header + table_header + table_body + table_footer
+
+def fetch_exchange_rate():
+    try:
+        response = requests.get(EXCHANGE_RATE_URL, timeout=10)
         response.raise_for_status()
+        data = response.json()
+        return data['rates'].get('SEK', 11.0)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching exchange rate: {e}. Using fallback 11.0.")
+        return 11.0
 
-        time.sleep(1.0)
+def fetch_crypto_data():
+    try:
+        t = time.time()
+        sek_rate = fetch_exchange_rate()
+        kraken_tickers = ','.join(CRYPTO_PAIRS.values())
+        response = requests.get(KRAKEN_TICKER_API_URL, params={'pair': kraken_tickers}, timeout=15)
+        response.raise_for_status()
+        kraken_data = response.json()
 
+        if kraken_data.get('error'):
+            logger.error(f"Kraken API error: {kraken_data['error']}")
+            return DEFAULT_DATA
+
+        result_key = kraken_data.get('result', {})
+        current_data = {'timestamp': t, 'EUR_SEK_RATE': sek_rate, 'ALL_PERCENT_CHANGE': {}, 'ALL_OHLC_CACHED': {}, 'ALL_24H_RANGE_OHLC': {}}
+        
+        for label, ticker in CRYPTO_PAIRS.items():
+            coin_symbol = label.split(' ')[0]
+            coin_info = result_key.get(ticker)
+            if coin_info is None: continue
+            try:
+                price_eur = float(coin_info['c'][0])
+                price_yesterday_eur = float(coin_info['o']) 
+                diff_24h_eur = price_eur - price_yesterday_eur
+                
+                current_data[f'{coin_symbol}/EUR'] = price_eur
+                current_data[f'{coin_symbol}/DIFF_24H_EUR'] = diff_24h_eur
+                
+            except (ValueError, IndexError, TypeError) as e:
+                logger.warning(f"Failed to parse Ticker data for {ticker}: {e}")
+            
+        return current_data if len(current_data) > 4 else DEFAULT_DATA
+    except Exception as e:
+        logger.error(f"❌ Error fetching/processing ticker data: {e}")
+        return DEFAULT_DATA 
+
+# --- Del 2 Start ---
+
+def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
+    time_ago = int(time.time()) - periods_ago_seconds 
+    params = { 'pair': kraken_ticker, 'interval': interval, 'since': time_ago }
+    try:
+        response = requests.get(KRAKEN_OHLC_API_URL, params=params, timeout=15)
+        response.raise_for_status()
+        ohlc_data = response.json()
+        if ohlc_data.get('error'):
+            return []
+        result_key = next(iter(ohlc_data['result'])) 
+        data_list = ohlc_data['result'][result_key]
+        return [{'time': int(row[0]), 'price': float(row[4])} for row in data_list]
+    except Exception as e:
+        logger.error(f"Error fetching OHLC data for {kraken_ticker}: {e}")
+        return []
+
+def calculate_percentage_changes(ohlc_data, current_price, periods):
+    changes = {}
+    if not ohlc_data or current_price is None or current_price == 0:
+        return {key: None for key in periods}
+
+    for period, config in periods.items():
+        if period not in TIME_WINDOWS: continue
+        blocks = config['blocks']
+        if len(ohlc_data) >= blocks:
+            reference_price = ohlc_data[-blocks]['price']
+            if reference_price > 0:
+                changes[period] = ((current_price - reference_price) / reference_price) * 100
+            else:
+                changes[period] = None 
+        else:
+            changes[period] = None
+    return changes
+
+def calculate_trendline(historical_data, blocks):
+    if len(historical_data) < blocks:
+        return None, None, None
+    data_segment = historical_data[-blocks:]
+    x_values = np.arange(blocks) 
+    y_values = np.array([item['price'] for item in data_segment])
+    slope, intercept, r_value, p_value, std_err = linregress(x_values, y_values)
+    start_index_global = len(historical_data) - blocks 
+    return slope, intercept, start_index_global
+
+def format_change(c):
+    if c is None: return html.Span("N/A", style={'color': '#6c757d'})
+    if abs(c) < 0.01: return html.Span("0.00%", style={'color': '#6c757d', 'fontWeight': 'bold'})
+    color = '#28a745' if c > 0 else '#dc3545' 
+    symbol = '▲' if c > 0 else '▼'
+    return html.Span(f"{symbol} {abs(c):.2f}%", style={'color': color, 'fontWeight': 'bold', 'fontSize': '0.85em'})
+
+def format_trade_value_display(v):
+    if v is None: return html.Span("N/A", style={'color': '#6c757d'})
+    val = int(round(v))
+    if val == 0: return html.Span("0", style={'color': '#6c757d', 'fontWeight': 'bold'})
+    color = '#006400' if val > 0 else '#8B0000' 
+    symbol = '▲' if val > 0 else '▼'
+    return html.Span(f"{symbol} {abs(val)}", style={'color': color, 'fontWeight': 'bold', 'fontSize': '0.85em'})
+
+def format_price_color_summary(price_in_base, change_24h):
+    if price_in_base is None: return html.Div("N/A", style={'color': '#6c757d'})
+    price_str = format_price_display(price_in_base)
+    color = '#495057'
+    if change_24h is not None:
+        if change_24h >= 0.01: color = '#28a745'
+        elif change_24h <= -0.01: color = '#dc3545'
+    return html.Div(price_str, style={'flex': '0 0 100px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px', 'color': color})
+
+def send_telegram_message(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}, timeout=10)
         return True
     except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] FEL vid skickande av Telegramnotis: {e}")
+        logger.error(f"Kunde inte skicka Telegram-meddelande: {e}")
         return False
 
-
-def notify_periodic_summary():
-    """Skickar en periodisk sammanfattning av de senaste 360m (6h) trenderna."""
-    global global_kpi_cache
-    
-    # 1. Hämta en säker kopia av datan
-    with data_lock:
-        local_kpi_cache = global_kpi_cache.copy()
+def check_and_send_trade_value_alerts(alert_data, r_instance):
+    if not r_instance: return
+    for coin_symbol, data in alert_data.items():
+        trade_value = data.get('trade_value')
+        current_price_eur = data.get('price_eur')
+        if trade_value is None or current_price_eur is None: continue
         
-    if not local_kpi_cache:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattning misslyckades: KPI-cache är tom.")
-        return False
-        
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Skickar Periodisk Sammanfattning (360m trend)...")
-
-    # 2. Förbered data för sortering och formatering
-    summary_data = []
-    
-    # OBS: Vi använder CRYPTO_PAIRS.items() för att få det visningsvänliga namnet
-    for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-        kpi = local_kpi_cache.get(pair_ticker, {})
-        
-        # Måste ha alla fält
-        change_360m = kpi.get('percent_change_360m')
-        signal_rating = kpi.get('signal_rating')
-        change_24h = kpi.get('percent_change_24h') # HÄMTA NYTT FÄLT: 24h förändring
-        aktuellt_varde = kpi.get('current_price_eur') # HÄMTA NYTT FÄLT: Aktuellt varde
-
-        # Välj ett enklare namn för tabellen
-        display_name = pair_key.split('/')[0].strip()
-        display_name = re.sub(r'\s*\((.*?)\)', '', display_name).strip()
-
-
-        if change_360m is not None and signal_rating is not None and change_24h is not None:
-            summary_data.append({
-                'crypto': display_name,
-                'change_360m': change_360m,
-                'rating': signal_rating,
-                'change_24h': change_24h, # Lägg till 24h
-                'aktuellt_varde': aktuellt_varde, # 2025-11-18
-            })
-
-    if not summary_data:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattning misslyckades: Ingen meningsfull 360m data hittades.")
-        return False
-
-    # 3. Sortera data (Högst procentuell förändring överst)
-    sorted_summary = sorted(summary_data, key=lambda x: x['change_360m'], reverse=True)
-    
-    # 4. Bygg meddelandet
-    header = (
-        f"⏳ *PERIODISK SAMMANFATTNING (360 MIN TREND)* ⏳\n\n"
-        f"Översikt över 6-timmars och 24-timmars rörelse samt MTS-signalbetyg.\n"
-        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"| Krypto | 360m % | 24h % | Betyg | Kurs |\n" # NYA KOLUMNER
-        f"|---|---|---|---|---|\n"
-    )
-    
-    table_rows = []
-    for item in sorted_summary:
-        # Formatera kolumner
-        crypto_col = f"`{item['crypto']}`"
-        change_360m_col = f"`{format_percent(item['change_360m'])}`"
-        change_24h_col = f"`{format_percent(item['change_24h'])}`" # Formatera 24h
-        rating_col = f"`{item['rating']:+}`"
-        aktuellt_varde_col = f"`{item['aktuellt_varde']}`"
-
-        
-        table_rows.append(f"| {crypto_col} | {change_360m_col} | {change_24h_col} | {rating_col} | {aktuellt_varde_col} |")
-        
-    message = header + "\n".join(table_rows)
-
-    # 5. Skicka meddelandet
-    return send_telegram_message(message)
-
-
-def notify_diff(crypto1, rating1, crypto2, rating2, difference):
-    """Skickar notis vid stor signalbetygsskillnad."""
-    message = (
-        f"🚨 *ALARM SIGNALDIFFERENS ({DIFF_THRESHOLD}-steg)* 🚨\n\n"
-        f"Skillnad i signalbetyg har uppnått tröskeln (Diff: `{difference}` >= `{DIFF_THRESHOLD}`).\n\n"
-        f"Krypto 1: *{crypto1}* (Betyg: `{rating1:+}`)\n"
-        f"Krypto 2: *{crypto2}* (Betyg: `{rating2:+}`)\n\n"
-        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-
-    return send_telegram_message(message)
-
-
-def notify_single(signal_text, pair_key, current_price_eur, signal_rating):
-    """Skickar notis vid stark Köp/Sälj-signal. Använder ALLTID EUR."""
-
-    price_formatted = f"{current_price_eur:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-    message = (
-        f"🔔 *MTS HANDELSTRIGGER (Betyg {signal_rating:+})* 🔔\n\n"
-        f"Kryptovaluta: *{pair_key}*\n"
-        f"Signal: *{signal_text}*\n"
-        f"Pris: `{price_formatted} EUR`\n"
-        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    return send_telegram_message(message)
-
-def notify_spike(timeframe_label, pair_key, percent_change, current_price_eur, threshold_label):
-    """(GENERALISERAD) Skickar notis vid kraftig uppgång/nedgång på en specifik tidsram. Använder ALLTID EUR."""
-    
-    price_formatted = f"{current_price_eur:,.4f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-    direction = "UPPGÅNG" if percent_change >= 0 else "NEDGÅNG"
-    emoji = "🚀" if percent_change >= 0 else "📉"
-    
-    message = (
-        f"{emoji} *{timeframe_label.upper()} PRISVARNING ({threshold_label} {direction})* {emoji}\n\n"
-        f"Kryptovaluta: *{pair_key}*\n"
-        f"Förändring: *{format_percent(percent_change)}* på {timeframe_label}.\n"
-        f"Tröskel: *{threshold_label}* passerad.\n"
-        f"Pris: `{price_formatted} EUR`\n"
-        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    return send_telegram_message(message)
-
-
-def send_test_notification():
-    """Skickar en testnotis via Telegram."""
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Försöker skicka TEST-TELEGRAM...")
-
-    message = (
-        f"✅ *OMSTART* ✅\n\n"
-        f"Detta är ett automatiskt testmeddelande från din Kryptospårare.\n"
-        f"Telegram-notiser fungerar korrekt (om du ser detta i din chatt).\n\n"
-        f"Tid: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-
-    success = send_telegram_message(message)
-    if success:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] TEST TELEGRAM SKICKAT. Kontrollera din chatt.")
-    else:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] TEST TELEGRAM MISSLYCKADES. Kontrollera dina Telegram-konstanter och/eller felloggen ovan.")
-    return success
-
-# --- ÖVRIGA FUNKTIONER (Datahantering och KPI:er) ---
-
-def sanitize_sheet_name(pair_key):
-    """Rensar kryptonamnet för att användas som arkivnamn i Excel."""
-    name = pair_key.split('/')[0].strip()
-    name = re.sub(r'\s*\((.*?)\)', '', name).strip()
-    name = re.sub(r'[^\w\s-]', '', name) 
-    name = name.replace(' ', '_')
-    return name[:31]
-
-def load_historical_data():
-    """Laddar historik från Excel-filen för alla kända par vid start."""
-    global data_history
-
-    max_len = max(SMA_WINDOWS)
-
-    for pair_ticker in CRYPTO_PAIRS.values():
-        if pair_ticker not in data_history:
-            data_history[pair_ticker] = collections.deque(maxlen=max_len)
-        else:
-             data_history[pair_ticker] = collections.deque(data_history[pair_ticker], maxlen=max_len)
-
-        if not data_history[pair_ticker]:
-            # Lägg till en startpunkt med pris 0 för att undvika tomma lister vid första körningen
-            ### ÄNDRING: Lägg till båda valutorna i starthistorik ###
-            data_history[pair_ticker].append({'time': datetime.now() - timedelta(minutes=max_len), 'price_sek': 0.0, 'price_eur': 0.0})
-
-    if os.path.exists(EXCEL_FILE_PATH):
-        try:
-            xlsx = pd.ExcelFile(EXCEL_FILE_PATH)
-            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-                sheet_name = sanitize_sheet_name(pair_key)
-                if sheet_name in xlsx.sheet_names:
-                    pair_df = pd.read_excel(xlsx, sheet_name=sheet_name)
-                    
-                    ### ÄNDRING: Ladda historik för båda valutorna om de finns, annars fallback ###
-                    if not pair_df.empty and 'time' in pair_df.columns:
-                        pair_df['time'] = pd.to_datetime(pair_df['time'])
-                        
-                        # Fallback för gamla loggfiler som bara har price_sek
-                        if 'price_eur' not in pair_df.columns:
-                            pair_df['price_eur'] = 0.0 # Kan inte back-populata, sätter till 0
-                        
-                        pair_df = pair_df[pair_df['price_sek'] > 0.0].sort_values(by='time').tail(max_len)
-                        
-                        with data_lock:
-                            data_history[pair_ticker].clear()
-                            for index, row in pair_df.iterrows():
-                                data_history[pair_ticker].append({
-                                    'time': row['time'], 
-                                    'price_sek': row['price_sek'],
-                                    'price_eur': row.get('price_eur', 0.0) # Använd .get() för säkerhets skull
-                                })
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Varning: Kunde inte läsa historik från Excel: {e}") 
-
-def log_data_to_excel(data_to_log):
-    """Skriver all aktuell historisk data till Excel-filen. Anropas inuti data_lock."""
-    
-    try:
-        with pd.ExcelWriter(EXCEL_FILE_PATH, engine='openpyxl') as writer:
-            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-                current_df = pd.DataFrame(data_to_log.get(pair_ticker, []))
-                
-                ### ÄNDRING: Logga båda valutorna ###
-                current_df = current_df[current_df['price_sek'] > 0.0]
-                if len(current_df) < 1: continue
-                
-                sheet_name = sanitize_sheet_name(pair_key)  
-                current_df['time'] = current_df['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-                current_df['price_sek'] = current_df['price_sek'].round(8)
-                current_df['price_eur'] = current_df['price_eur'].round(8)
-                
-                # Säkerställ kolumnordning
-                current_df = current_df[['time', 'price_sek', 'price_eur']]
-                
-                current_df.to_excel(writer, sheet_name=sheet_name, index=False)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Data loggad till Excel.")
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] FEL vid skrivning till Excel: {e}")
-### SLUT PÅ ÄNDRING ###
-
-@lru_cache(maxsize=1)
-def get_eur_sek_rate():
-    """Hämtar aktuell EUR/SEK växelkurs. Använder 11.50 SEK som fallback."""
-    try:
-        response = requests.get(EXCHANGE_RATE_URL, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        if 'rates' in data and 'SEK' in data['rates']:
-            return data['rates']['SEK']
-        return 11.50
-    except requests.exceptions.RequestException:
-        return 11.50
-    except Exception:
-        return 11.50
-
-### ÄNDRING: Returnera BÅDE EUR och SEK pris ###
-def get_ohlc_price(pair_ticker, since_days_ago, eur_sek_rate):
-    """Hämtar historiskt slutpris (stängningspris) från Kraken OHLC API."""
-    since_time = datetime.now() - timedelta(days=since_days_ago)
-    since_unix = int((since_time - timedelta(days=10)).timestamp())
-    params = {'pair': pair_ticker, 'interval': 1440, 'since': since_unix}
-
-    try:
-        response = requests.get(KRAKEN_OHLC_API_URL, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        if data.get('error') and data['error']:
-            return None, None, f"OHLC Fel: {data['error']}."
-
-        kraken_pair_key = list(data['result'].keys())[0]
-        ohlc_data = data['result'][kraken_pair_key]
-
-        target_timestamp = since_time.timestamp()
-        best_match_price_eur = None
-
-        for entry in reversed(ohlc_data):
-            timestamp = entry[0]
-            if timestamp < target_timestamp:
-                best_match_price_eur = float(entry[4])
-                break
-
-        if best_match_price_eur is not None:
-            # Returnera (price_eur, price_sek, error)
-            return best_match_price_eur, (best_match_price_eur * eur_sek_rate), None
-
-        return None, None, f"Ingen tillförlitlig OHLC-data hittades."
-
-    except Exception as e:
-        return None, None, f"Fel vid hämtning av OHLC-data: {e}"
-### SLUT PÅ ÄNDRING ###
-
-
-### ÄNDRING: Omdöpt och modifierad för att returnera EUR, SEK och valutaneutral 24h% ###
-def get_crypto_data(pair_ticker):
-    """Hämtar Aktuellt pris (EUR & SEK) och 24h KPI:er."""
-    eur_sek_rate = get_eur_sek_rate()
-    try:
-        params = {'pair': pair_ticker}
-        response = requests.get(KRAKEN_TICKER_API_URL, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        if data.get('error') and data['error']: return None, f"Ticker Fel: {data['error']} för {pair_ticker}"
-
-        if data.get('result'):
-            kraken_pair_key = list(data['result'].keys())[0]
-            result = data['result'][kraken_pair_key]
-
-            # Basvärden i EUR
-            latest_price_eur = float(result['c'][0])
-            open_24h_eur = float(result['o'])
-            high_24h_eur = float(result['h'][1])
-            low_24h_eur = float(result['l'][1])
-
-            # SEK-konverteringar
-            price_sek = latest_price_eur * eur_sek_rate
-            high_sek = high_24h_eur * eur_sek_rate
-            low_sek = low_24h_eur * eur_sek_rate
-            open_sek = open_24h_eur * eur_sek_rate
-
-            # 24h % (valutaneutral, baserad på EUR)
-            percent_change_24h = ((latest_price_eur - open_24h_eur) / open_24h_eur) * 100 if open_24h_eur != 0 else 0
-
-
-
-        else: return None, f"Fick ett tomt Ticker-resultat."
-
-    except Exception as e: return None, f"Fel vid hämtning av Ticker-data: {e}"
-
-    # Procentuell skillnad hög och låg på 24h
-    formel2 = ((high_24h_eur - low_24h_eur) / latest_price_eur) * 100
-
-    if formel2 is not None:
-        # OBS: Indentering och rätt variabel (formel2) och format (:.2f)
-        formel = f"{formel2:.2f}""%"
-    else: # OBS: Kolon (:) krävs här
-        # OBS: Indentering
-        formel = "N/A"
-
-
-    return {
-        'price_eur': latest_price_eur,
-        'high_24h_eur': high_24h_eur,
-        'low_24h_eur': low_24h_eur,
-        'open_24h_eur': open_24h_eur,
-        'price_sek': price_sek,
-        'high_24h_sek': high_sek,
-        'low_24h_sek': low_sek,
-        'open_24h_sek': open_sek,
-        'percent_change_24h': percent_change_24h, # Denna är valutaneutral
-        'formel': formel,
-    }, None
-### SLUT PÅ ÄNDRING ###
-
-def calculate_30min_trend(pair_ticker, history_data):
-    """Beräknar den procentuella trenden över de senaste 30 lagrade datapunkterna (linjär regression)."""
-
-    ### ÄNDRING: Använd 'price_sek' för all bakgrundslogik (behåller notiser intakta) ###
-    filtered_history = [p for p in history_data if p['price_sek'] > 0.0]
-
-    if not filtered_history or len(filtered_history) < SUMMARY_TREND_POINTS_30M:
-        return 0.0, "Väntar på data", "gray"
-
-    df = pd.DataFrame(filtered_history[-SUMMARY_TREND_POINTS_30M:])
-
-    x_time_numeric = np.array([t.timestamp() for t in df['time']])
-    y_price = df['price_sek'] # Behåll logik på SEK
-
-    # Linjär regression
-    slope, intercept, _, _, _ = linregress(x_time_numeric, y_price)
-
-    start_price_trend = slope * x_time_numeric.min() + intercept
-    end_price_trend = slope * x_time_numeric.max() + intercept
-
-    if start_price_trend == 0.0 or start_price_trend is None: return 0.0, "Ingen historik", "gray"
-
-    percent_change = ((end_price_trend - start_price_trend) / start_price_trend) * 100
-
-    if percent_change > 0.0: return percent_change, f"Stigande ({SUMMARY_TREND_POINTS_30M} min)", "#006400" # Mörkgrön
-    elif percent_change < 0.0: return percent_change, f"Fallande ({SUMMARY_TREND_POINTS_30M} min)", "#8B0000" # Mörkröd
-    else: return 0.0, f"Stabil ({SUMMARY_TREND_POINTS_30M} min)", "#555555" # Grå
-    
-def calculate_trend_change(history_data, num_points):
-    """Beräknar den totala procentuella förändringen över de senaste 'num_points' minuter (Från startpunkt till slutpunkt)."""
-
-    ### ÄNDRING: Använd 'price_sek' för all bakgrundslogik ###
-    filtered_history = [p for p in history_data if p['price_sek'] > 0.0]
-
-    if len(filtered_history) < 2:
-        return 0.0 # Inte tillräckligt med data
-
-    if len(filtered_history) < num_points:
-        start_index = 0
-    else:
-        start_index = len(filtered_history) - num_points
-    
-    start_price = filtered_history[start_index]['price_sek'] # Behåll logik på SEK
-    current_price = filtered_history[-1]['price_sek'] # Behåll logik på SEK
-    
-    if start_price == 0:
-        return 0.0
-
-    percent_change = ((current_price - start_price) / start_price) * 100
-    return percent_change
-### SLUT PÅ ÄNDRING ###
-
-# Funktion för 100m (Total förändring)
-def calculate_100min_change(history_data):
-    return calculate_trend_change(history_data, MAX_DASH_POINTS)
-
-# Funktion för 360m trend (Total förändring)
-def calculate_360min_change(history_data):
-    return calculate_trend_change(history_data, SUMMARY_TREND_POINTS_360M)
-
-
-def calculate_long_term_rating(percent_7d, percent_30d):
-    """
-    Beräknar Långsiktigt Betyg baserat på 7d och 30d utfall (Max +/- 4 poäng).
-    """
-
-    percent_7d = percent_7d if percent_7d is not None else 0.0
-    percent_30d = percent_30d if percent_30d is not None else 0.0
-
-    is_bullish_filter = (percent_7d >= 0.0 and percent_30d >= 0.0)
-    is_bearish_filter = (percent_7d <= 0.0 and percent_30d <= 0.0)
-
-    if not is_bullish_filter and not is_bearish_filter:
-        return 0, "NEUTRAL (Blandad)", '#B8860B' # Guld
-
-    # Skalningsfaktor: 4 poäng / 10% = 0.4 poäng per 1%
-    rating = np.clip(percent_7d * 0.4, -4, 4)
-    rating = round(rating)
-
-    if is_bullish_filter and rating >= 1:
-        return rating, "BULLISH (KÖP)", '#3CB371' # Medium havgrön
-    elif is_bearish_filter and rating <= -1:
-        return rating, "BEARISH (SÄLJ)", '#FF6347' # Tomatröd
-    else:
-        return rating, "WEAK FILTER (Avvakta)", '#55555K' # Grå
-
-
-# --- MTS HANDELSALGORITM FUNKTION (UPPDATERAD) ---
-def generate_mts_signal(kpi_data, history_data):
-    """
-    Implementerar Multi-Timeframe Algoritmen (MTS) för 10-steg.
-    Total Rating = Long-Term Rating (Max +/-4) + Short-Term Rating (Max +/-6).
-    """
-
-    ### ÄNDRING: Använd 'price_sek' för all bakgrundslogik ###
-    filtered_history = [p for p in history_data if p['price_sek'] > 0.0]
-
-    if len(filtered_history) < SUMMARY_TREND_POINTS_30M: 
-        return "Väntar på 30m data", 0, '#555555', 0.0, 0.0
-
-    # Huvud-KPI:er (Dessa är 'price_sek', 'high_24h_sek' etc. som matas in från background_collector)
-    price_sek = kpi_data['price']
-    high_24h = kpi_data['high_24h']
-    low_24h = kpi_data['low_24h']
-
-    price_7d_ago = kpi_data['price_7d']
-    price_30d_ago = kpi_data['price_30d']
-
-    # KORRIGERING: Hantera potentialen för att OHLC-data saknas/är noll
-    if price_7d_ago is None or price_30d_ago is None or (price_7d_ago is not None and price_7d_ago <= 0) or (price_30d_ago is not None and price_30d_ago <= 0):
-        price_7d_ago_calc = price_sek
-        price_30d_ago_calc = price_sek
-    else:
-        price_7d_ago_calc = price_7d_ago
-        price_30d_ago_calc = price_30d_ago
-
-    percent_7d = ((price_sek - price_7d_ago_calc) / price_7d_ago_calc) * 100 if price_7d_ago_calc != 0 else 0
-    percent_30d = ((price_sek - price_30d_ago_calc) / price_30d_ago_calc) * 100 if price_30d_ago_calc != 0 else 0
-    ### SLUT PÅ ÄNDRING ###
-
-    # --- STEG 1: LÅNGSIKTIGT BETYG (Max +/- 4) ---
-    long_term_rating, filter_status, filter_color = calculate_long_term_rating(percent_7d, percent_30d)
-
-    if abs(long_term_rating) < 1:
-        return filter_status, long_term_rating, filter_color, percent_7d, percent_30d
-
-    # --- STEG 2 & 3: KORTSIKTIGT BETYG (Max +/- 6, fördelat 3+3) ---
-
-    df_360m = pd.DataFrame(filtered_history[-SUMMARY_TREND_POINTS_360M:])
-    prices_30m = df_360m['price_sek'].tail(SUMMARY_TREND_POINTS_30M) # Behåll logik på SEK
-
-    short_term_rating = 0
-    signal_text = filter_status
-    signal_color = filter_color
-
-    is_bullish = long_term_rating >= 1
-    is_bearish = long_term_rating <= -1
-
-
-    # --- STEG 2: Medellångt Momentum (Max +/- 3 poäng) (UPPDATERAD) ---
-    percent_change_100m = kpi_data['percent_change_100m']
-    percent_change_360m = kpi_data['percent_change_360m'] # NY KPI
-
-    # 24h Kvartilanalys
-    range_24h = high_24h - low_24h
-    q3_boundary = low_24h + (0.75 * range_24h) if range_24h > 0 else high_24h
-    q1_boundary = low_24h + (0.25 * range_24h) if range_24h > 0 else low_24h
-
-    # Kriterier för STARK momentum (Kräver nu bekräftelse från 360m)
-    strong_buy_trend = (percent_change_100m >= 0.5) and (percent_change_360m >= 1.0) # > 0.5% på 100m OCH > 1.0% på 360m
-    strong_sell_trend = (percent_change_100m <= -0.5) and (percent_change_360m <= -1.0) # < -0.5% på 100m OCH < -1.0% på 360m
-    
-    is_strong_buy_momentum = is_bullish and strong_buy_trend and (price_sek > q3_boundary)
-    is_strong_sell_momentum = is_bearish and strong_sell_trend and (price_sek < q1_boundary)
-
-    if is_strong_buy_momentum:
-        short_term_rating += 3
-        signal_text = "Momentum: STARK KÖP (100m/360m bekräftat)"
-        signal_color = '#00CED1' # Mörk turkos
-    elif is_strong_sell_momentum:
-        short_term_rating -= 3
-        signal_text = "Momentum: STARK SÄLJ (100m/360m bekräftat)"
-        signal_color = '#DC143C' # Röd
-    else:
-        # Svagare momentum: BARA 100m-trenden
-        trend_100m_up_weak = (percent_change_100m >= 0.1)
-        trend_100m_down_weak = (percent_change_100m <= -0.1)
-
-        if is_bullish and trend_100m_up_weak:
-             short_term_rating += 1 
-             signal_text = "Momentum: Positiv (Väntar på styrka)"
-             signal_color = '#9ACD32' # Gul-grön
-        elif is_bearish and trend_100m_down_weak:
-             short_term_rating -= 1 
-             signal_text = "Momentum: Negativ (Väntar på svaghet)"
-             signal_color = '#FFA07A' # Ljust Orange
-
-
-    # --- STEG 3: KORTSIKTIG TRIGGER (Max +/- 3 poäng) (OFÖRÄNDRAD) ---
-
-    high_30m = prices_30m.max() if not prices_30m.empty else price_sek
-    low_30m = prices_30m.min() if not prices_30m.empty else price_sek
-
-    reversion_buy_price = low_30m * (1 + REVERSION_THRESHOLD)
-    reversion_sell_price = high_30m * (1 - REVERSION_THRESHOLD)
-
-    is_near_30m_low = (price_sek <= high_30m) and (price_sek >= low_30m) and (price_sek <= reversion_buy_price)
-    is_near_30m_high = (price_sek >= low_30m) and (price_sek <= high_30m) and (price_sek >= reversion_sell_price)
-
-    if not df_360m.empty:
-        sma_100m = df_360m['price_sek'].tail(MAX_DASH_POINTS).mean() # Behåll logik på SEK
-        previous_price = df_360m['price_sek'].iloc[-2] if len(df_360m) >= 2 else price_sek # Behåll logik på SEK
-    else:
-        sma_100m = price_sek
-        previous_price = price_sek
-
-    momentum_shift_up = (previous_price < sma_100m) and (price_sek >= sma_100m)
-    momentum_shift_down = (previous_price > sma_100m) and (price_sek <= sma_100m)
-
-
-    # --- SLUTLIG TRADEMARK TRIGER (Trigger poäng: +3 eller -3) ---
-    if is_bullish and (is_near_30m_low or momentum_shift_up):
-        short_term_rating += 3
-        signal_text = "KÖP-TRIGGER (Pulllback/Vändning)"
-        signal_color = '#00BFFF' # Djupt himmelsblå
-
-    elif is_bearish and (is_near_30m_high or momentum_shift_down):
-        short_term_rating -= 3
-        signal_text = "SÄLJ-TRIGGER (Uppsving/Vändning)"
-        signal_color = '#FF4500' # Orange-röd
-
-    short_term_rating = np.clip(short_term_rating, -6, 6)
-
-    # --- TOTAL BETYG (Max +/- 10) ---
-    total_rating = long_term_rating + short_term_rating
-
-    if total_rating >= 8:
-        signal_text = "ULTIMAT KÖP-SIGNAL"
-        signal_color = '#00FA9A' # Vårmörkgrön
-    elif total_rating <= -8:
-        signal_text = "ULTIMAT SÄLJ-SIGNAL"
-        signal_color = '#B22222' # Tegelröd
-    elif total_rating >= 5:
-        signal_text = "STARK KÖP-SIGNAL"
-    elif total_rating <= -5:
-        signal_text = "STARK SÄLJ-SIGNAL"
-    elif abs(total_rating) < 1:
-        signal_text = "TOTAL NEUTRALITET"
-        signal_color = '#444444' # Mörkgrå
-
-    return signal_text, total_rating, signal_color, percent_7d, percent_30d
-
-
-### ÄNDRING: Accepterar 'price_key' för att välja 'price_sek' eller 'price_eur' ###
-def calculate_sma(df, window, price_key='price_sek'):
-    """Beräknar Simple Moving Average (SMA) för en given Pandas DataFrame."""
-    # Använd den specificerade pris-kolumnen
-    return df[price_key].rolling(window=min(window, len(df))).mean()
-### SLUT PÅ ÄNDRING ###
-
-# =========================================================================
-# === NY FUNKTION: DEDIKERAD BAKGRUNDSLOGIK (LÅS-FIX APPLICERAD)
-# =========================================================================
-
-def background_data_collector():
-    """
-    DEDIKERAD TRÅD. Hämtar, bearbetar, lagrar och loggar data i en loop.
-    All skrivning till globala cacher sker inuti 'with data_lock:'.
-    """
-    global global_kpi_cache, SENT_NOTIFICATIONS, SENT_DIFF_NOTIFICATIONS, SENT_SPIKE_NOTIFICATIONS, current_signal_ratings, LAST_SUMMARY_SENT
-    
-    # Lokal räknare för OHLC/Excel-loggning
-    local_interval_counter = 0
-
-    print("---------------------------------------------------------")
-    print(">>> Startar 24/7 data-loggning i bakgrundstråd (var 60s) <<<")
-    print("---------------------------------------------------------")
-
-    # Initial datainsamling vid start om cachen är tom
-    initial_data_fetch = False
-    with data_lock:
-        if not global_kpi_cache:
-            initial_data_fetch = True
+        if trade_value > 0:
+            highest_threshold_met = None
+            for threshold in TRADE_VALUE_ALERTS:
+                if trade_value >= threshold:
+                    highest_threshold_met = threshold
+                    break
             
-    if initial_data_fetch:
-        print(f"[{datetime.now().strftime('%H:%M:%M')}] Initial datainsamling påbörjad...")
-        for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-            ### ÄNDRING: Hämta båda valutorna ###
-            ticker_data, error = get_crypto_data(pair_ticker)
-            if ticker_data:
-                with data_lock:
-                    global_kpi_cache[pair_ticker] = {
-                        **ticker_data,
-                        # Sätt initiala 7d/30d-priser för båda valutorna
-                        'price_7d_eur': ticker_data['price_eur'],
-                        'price_30d_eur': ticker_data['price_eur'],
-                        'price_7d_sek': ticker_data['price_sek'],
-                        'price_30d_sek': ticker_data['price_sek'],
-                        'percent_change_100m': 0.0,
-                        'percent_change_360m': 0.0,
-                        'time': datetime.now(),
-                        'signal_rating': 0,
-                        'signal_text': 'Väntar på historik',
-                        'signal_color': '#555555',
-                    }
-                    # Lägg till en första datapunkt för båda valutorna
-                    data_history[pair_ticker].append({
-                        'time': datetime.now(), 
-                        'price_sek': ticker_data['price_sek'],
-                        'price_eur': ticker_data['price_eur']
-                    })
-            ### SLUT PÅ ÄNDRING ###
+            if highest_threshold_met is not None:
+                key = f"tv_alert:{coin_symbol}:+{highest_threshold_met}"
+                if r_instance.set(key, 1, ex=TRADE_VALUE_DEBOUNCE_SECONDS, nx=True):
+                    coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+                    msg = (f"🔥 **HÖGT HANDELSVÄRDE** 🔥\n"
+                           f"Valuta: *{coin_label} ({coin_symbol})*\n"
+                           f"Aktuellt Pris: *{format_price_telegram(current_price_eur)} EUR*\n"
+                           f"Handelsvärde ($H.V.$): **+{trade_value}** (Tröskel: +{highest_threshold_met})")
+                    send_telegram_message(msg)
+                    logger.info(f"Telegram TV Alert skickad: {coin_symbol} HÖGT +{highest_threshold_met}")
 
+def check_and_send_alerts(alert_data, r_instance):
+    if not r_instance: return
+    for coin_symbol, data in alert_data.items():
+        changes = data['changes']
+        current_price_eur = data['price_eur']
+        if current_price_eur is None: continue
+        
+        for period in ALERT_PERIODS:
+            change_percent = changes.get(period)
+            if change_percent is None: continue
+            
+            coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+            formatted_price = format_price_telegram(current_price_eur)
+            
+            if change_percent > 0:
+                threshold = next((t for t in ALERT_THRESHOLDS_UP if change_percent >= t), None)
+                if threshold is not None:
+                    key = f"alert:{coin_symbol}:+{period}:{threshold}"
+                    if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
+                        msg = (f"🚀 **HÖG PRISUPPGÅNG** 🚀\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *+{change_percent:.2f}%* ({period})")
+                        send_telegram_message(msg)
+                        logger.info(f"Telegram Alert: {coin_symbol} +{threshold}% ({period})")
+            elif change_percent < 0:
+                threshold = next((t for t in ALERT_THRESHOLDS_DOWN if change_percent <= t), None)
+                if threshold is not None:
+                    key = f"alert:{coin_symbol}:{period}:{threshold}"
+                    if r_instance.set(key, 1, ex=ALERT_DEBOUNCE_SECONDS, nx=True):
+                        msg = (f"🔻 **HÖG PRISNEDGÅNG** 🔻\nValuta: *{coin_label}*\nPris: *{formatted_price} EUR*\nRörelse: *{change_percent:.2f}%* ({period})")
+                        send_telegram_message(msg)
+                        logger.info(f"Telegram Alert: {coin_symbol} {threshold}% ({period})")
 
+# --- Bakgrundstrådar ---
+
+def background_data_fetch(redis_instance):
+    UPDATE_CYCLE_SECONDS = UPDATE_INTERVAL_SECONDS_DATA
     while True:
-        
-        # Säkerställ att vi låser när vi skriver till delade globala variabler
-        with data_lock:
-            
-            # --- START PÅ LÅST BLOCK ---
-            
-            eur_sek_rate = get_eur_sek_rate()
-            current_time = datetime.now()
-            new_ratings = {}
-            print(f"\n--- Datauppdatering startad: {current_time.strftime('%Y-%m-%d %H:%M:%S')} ---")
+        cycle_start_time = time.time()
+        try:
+            new_data = fetch_crypto_data()
+            if not new_data or new_data == DEFAULT_DATA:
+                time.sleep(UPDATE_CYCLE_SECONDS)
+                continue
+                
+            all_percent_changes = {}
+            all_24h_range_ohlc = {} 
+            alert_data_for_sending = {} 
+            trade_value_alert_data = {} 
 
-            # Temporär cache för OHLC-data som kan ta tid att hämta
-            ohlc_cache = {} 
-            # Använd en smartare kontroll: kör OHLC-hämtningen var 60:e datapunkt.
-            is_ohlc_update_time = local_interval_counter % 60 == 0
-
-            # Första loop: Hämta Ticker-data, uppdatera historik, hämta OHLC
-            for pair_key, pair_ticker in CRYPTO_PAIRS.items():
-                
-                ### ÄNDRING: Hämta data för båda valutorna ###
-                # 1. Hämta Ticker-data
-                ticker_data, error = get_crypto_data(pair_ticker)
-
-                if error:
-                    print(f"[{pair_key}] FEL vid Ticker-data: {error}")
-                    continue
-
-                current_price_sek = ticker_data['price_sek'] # För notiser
-                
-                # 2. Uppdatera lokal historik (Deque)
-                data_history[pair_ticker].append({
-                    'time': current_time, 
-                    'price_sek': ticker_data['price_sek'],
-                    'price_eur': ticker_data['price_eur']
-                })
-                local_history_list = list(data_history[pair_ticker]) # Uppdaterad lista för beräkningar nedan
-
-                # 3. Hämta OHLC-data (Endast vid uppdatering)
-                price_7d_eur, price_7d_sek = None, None
-                price_30d_eur, price_30d_sek = None, None
-                
-                cached_kpi = global_kpi_cache.get(pair_ticker, {})
-                
-                if is_ohlc_update_time:
-                    price_7d_eur, price_7d_sek, error_7d = get_ohlc_price(pair_ticker, 7, eur_sek_rate)
-                    if error_7d:
-                         print(f"[{pair_key}] Varning vid 7d OHLC: {error_7d}")
-                    
-                    price_30d_eur, price_30d_sek, error_30d = get_ohlc_price(pair_ticker, 30, eur_sek_rate)
-                    if error_30d:
-                         print(f"[{pair_key}] Varning vid 30d OHLC: {error_30d}")
-                
-                # 4. Uppdatera KPI-cache (använd gamla värden om nya OHLC saknas)
-                price_7d_ago_eur = price_7d_eur if price_7d_eur is not None else cached_kpi.get('price_7d_eur')
-                price_7d_ago_sek = price_7d_sek if price_7d_sek is not None else cached_kpi.get('price_7d_sek')
-                price_30d_ago_eur = price_30d_eur if price_30d_eur is not None else cached_kpi.get('price_30d_eur')
-                price_30d_ago_sek = price_30d_sek if price_30d_sek is not None else cached_kpi.get('price_30d_sek')
-                
-                # SÄKERSTÄLL att det finns ett startvärde (för att undvika None i MTS)
-                if price_7d_ago_sek is None: price_7d_ago_sek = current_price_sek
-                if price_30d_ago_sek is None: price_30d_ago_sek = current_price_sek
-                # (Vi behöver inte göra detta för EUR, då MTS-logiken körs på SEK)
-
-                ### SLUT PÅ ÄNDRING ###
-
-                # 5. Beräkna kortsiktiga trender och MTS-signal (BASERAT PÅ SEK)
-                trend_30m_percent, trend_30m_text, trend_30m_color = calculate_30min_trend(pair_ticker, local_history_list)
-                percent_change_100m = calculate_100min_change(local_history_list)
-                percent_change_360m = calculate_360min_change(local_history_list)
-                
-                # Komplett KPI-paket för MTS-algoritmen (SEK-BASERAD)
-                full_kpi_data_for_mts = {
-                    'price': ticker_data['price_sek'],
-                    'high_24h': ticker_data['high_24h_sek'],
-                    'low_24h': ticker_data['low_24h_sek'],
-                    'price_7d': price_7d_ago_sek,
-                    'price_30d': price_30d_ago_sek,
-                    'percent_change_100m': percent_change_100m,
-                    'percent_change_360m': percent_change_360m,
-                }
-                
-                signal_text, signal_rating, signal_color, percent_7d, percent_30d = generate_mts_signal(full_kpi_data_for_mts, local_history_list)
-                
-                current_price_eur = ticker_data.get('price_eur', 0.0) # Använd .get()
-
-                new_ratings[pair_ticker] = signal_rating
-                
-                # 6. Uppdatera Global KPI Cache (Lagra ALL data, EUR, SEK, och logik)
-                global_kpi_cache[pair_ticker] = {
-                    **ticker_data, # Innehåller alla price_eur, price_sek, high_24h_eur, etc.
-                    'price_7d_eur': price_7d_ago_eur,
-                    'price_7d_sek': price_7d_ago_sek,
-                    'price_30d_eur': price_30d_ago_eur,
-                    'price_30d_sek': price_30d_ago_sek,
-                    'time': current_time,
-                    'trend_30m_percent': trend_30m_percent, 
-                    'trend_30m_text': trend_30m_text,
-                    'trend_30m_color': trend_30m_color,
-                    'percent_change_100m': percent_change_100m, # Från SEK-logik
-                    'percent_change_360m': percent_change_360m, # Från SEK-logik
-                    'signal_text': signal_text,
-                    'signal_rating': signal_rating,
-                    'signal_color': signal_color,
-                    'percent_7d': percent_7d, # Från SEK-logik
-                    'percent_30d': percent_30d, # Från SEK-logik
-                }
-
-                # 7. Kontrollera och skicka TELEGRAM notiser (MTS) - Använder EUR
-                if abs(signal_rating) >= 5: # Stark köp/sälj
-                    last_notified_rating = SENT_NOTIFICATIONS.get(pair_ticker, 0)
-                    
-                    if (signal_rating * last_notified_rating <= 0) or (abs(signal_rating) > abs(last_notified_rating)):
-                        threading.Thread(target=notify_single, args=(signal_text, pair_key, current_price_eur, signal_rating)).start()
-                        SENT_NOTIFICATIONS[pair_ticker] = signal_rating
-                
-                
-                # 8. KONTROLLERA OCH SKICKA ALLA SPIKE-NOTISER (30m, 100m, 360m, 24h)
-                
-                # Hämta alla relevanta procentförändringar från den nyligen uppdaterade cachen
-                kpi = global_kpi_cache[pair_ticker]
-                percent_changes = {
-                    '30m': kpi.get('trend_30m_percent'),
-                    '100m': kpi.get('percent_change_100m'),
-                    '360m': kpi.get('percent_change_360m'),
-                    '24h': kpi.get('percent_change_24h'), # Denna är valutaneutral
-                }
-
-                for tf_label, percent_val in percent_changes.items():
-                    
-                    if percent_val is None: # Hoppa över om data saknas (t.ex. 30m vid start)
-                        continue
-
-                    for label, threshold in SORTED_SPIKE_THRESHOLDS:
-                        is_positive_spike = threshold > 0 and percent_val >= threshold
-                        is_negative_spike = threshold < 0 and percent_val <= threshold
+            for label, ticker in CRYPTO_PAIRS.items():
+                coin_symbol = label.split(' ')[0]
+                current_price_eur = new_data.get(f'{coin_symbol}/EUR')
+                if current_price_eur is None: continue
                         
-                        if is_positive_spike or is_negative_spike:
-                            # Använd den nya globala state-variabeln
-                            if not SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label]:
-                                threading.Thread(target=notify_spike, args=(
-                                    tf_label, 
-                                    pair_key, 
-                                    percent_val, # Skicka rätt procentvärde
-                                    current_price_eur, # Använd EUR för notis 
-                                    label
-                                )).start()
-                                SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label] = True
-                                break # Skicka bara den starkaste notisen FÖR DENNA TIDSRAM
-                        else:
-                            # Återställ flaggan om priset faller under tröskeln
-                            if SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label]:
-                                SENT_SPIKE_NOTIFICATIONS[tf_label][pair_ticker][label] = False
-                                
-                # 9. Återställ notifikationer om signalen är neutral
-                if abs(signal_rating) < 1:
-                     SENT_NOTIFICATIONS[pair_ticker] = 0
+                periods_ago_24h = 86400 
+                ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
+                if ohlc_5min_data:
+                     redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
 
-            # 10. Kontrollera Arbitrage-signal
-            crypto_keys = list(CRYPTO_PAIRS.keys())
-            for key1, key2 in itertools.combinations(crypto_keys, 2):
+                # Fetch 1-day OHLC data for long-term trends (6m and 1y). Need enough data for 1 year (365 days)
+                periods_ago_1y = 365 * 86400 * 1.1 # 1.1 years buffer
+                ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_1y) 
+                if ohlc_1day_data:
+                     redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
 
-                ticker1 = CRYPTO_PAIRS[key1]
-                ticker2 = CRYPTO_PAIRS[key2]
-
-                rating1 = new_ratings.get(ticker1, 0)
-                rating2 = new_ratings.get(ticker2, 0)
-
-                if rating1 is None or rating2 is None:
-                    continue
-
-                difference = abs(rating1 - rating2)
-
-                sorted_tickers = sorted([ticker1, ticker2])
-                pair_key_tracker = f"{sorted_tickers[0]} __{sorted_tickers[1]}"
-
-                if difference >= DIFF_THRESHOLD: 
-                    last_notified_diff = SENT_DIFF_NOTIFICATIONS.get(pair_key_tracker, 0)
-
-                    if difference > last_notified_diff:
-
-                        threading.Thread(target=notify_diff, args=(key1, rating1, key2, rating2, difference)).start()
-
-                        SENT_DIFF_NOTIFICATIONS[pair_key_tracker] = difference
-
+                trade_value_int = None
+                if ohlc_5min_data and ohlc_1day_data:
+                    hist_5min_current = ohlc_5min_data.copy()
+                    hist_5min_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
+                    hist_1day_current = ohlc_1day_data.copy()
+                    hist_1day_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
+                    
+                    trade_value, _ = calculate_trade_value(hist_5min_current, current_price_eur, hist_1day_current)
+                    if trade_value is not None:
+                        trade_value_int = int(round(trade_value))
+                
+                # Short-term changes (using 5-minute OHLC data)
+                if ohlc_5min_data:
+                    prices_eur = [item['price'] for item in ohlc_5min_data]
+                    if prices_eur:
+                        all_24h_range_ohlc[coin_symbol] = {'high_eur': max(prices_eur), 'low_eur': min(prices_eur)}
+                    short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
+                    percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
                 else:
-                    if pair_key_tracker in SENT_DIFF_NOTIFICATIONS:
-                        SENT_DIFF_NOTIFICATIONS[pair_key_tracker] = 0
-                        
-            # 11. Excel-loggning var 5:e minut
-            local_interval_counter += 1
-            if local_interval_counter % 5 == 0:
-                # Skickar kopian av historiken till log_data_to_excel
-                log_data_to_excel({ticker: list(history) for ticker, history in data_history.items()})
+                    percent_changes = {}
+
+                # Long-term changes (using 1-day OHLC data, now including 6m/1y)
+                long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
+                long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
+                
+                percent_changes.update(long_term_changes) 
+                all_percent_changes[coin_symbol] = percent_changes
+                alert_data_for_sending[coin_symbol] = {'changes': percent_changes, 'price_eur': current_price_eur}
+                trade_value_alert_data[coin_symbol] = {'trade_value': trade_value_int, 'price_eur': current_price_eur}
+                time.sleep(0.1) 
             
-            # 12. Periodisk Sammanfattningskontroll
-            now_hour = current_time.hour
-            now_minute = current_time.minute
+            if redis_instance:
+                check_and_send_alerts(alert_data_for_sending, redis_instance)
+                check_and_send_trade_value_alerts(trade_value_alert_data, redis_instance) 
+                new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
+                new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc 
+                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_CYCLE_SECONDS + 60)
+                logger.debug("✅ Hela 'crypto_data' sparad.")
             
-            # Skickas endast om timmen är i SUMMARY_SEND_TIMES och minuten är nära 00
-            if now_hour in SUMMARY_SEND_TIMES and now_minute < 2:
-                last_sent = LAST_SUMMARY_SENT.get(now_hour)
-                # Skicka endast om den inte har skickats idag (eller om det är första gången)
-                if last_sent is None or last_sent.date() < current_time.date():
-                    # Måste skickas utanför data_lock
-                    threading.Thread(target=notify_periodic_summary).start() 
-                    LAST_SUMMARY_SENT[now_hour] = current_time
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Sammanfattningsnotis skickad för kl {now_hour}:00.")
+            time.sleep(max(0, UPDATE_CYCLE_SECONDS - (time.time() - cycle_start_time)))
+        except Exception as e:
+            logger.error(f"❌ Fel i bakgrundstråd: {e}")
+            time.sleep(60)
+
+def background_summary_sender(redis_instance):
+    while True:
+        try:
+            now_utc = datetime.now(timezone.utc)
+            timezone_offset_hours = 1 
+            if now_utc.month in range(4, 10): 
+                timezone_offset_hours = 2 
+            elif now_utc.month == 3 and now_utc.day > 24 and now_utc.weekday() == 6:
+                timezone_offset_hours = 2
+            elif now_utc.month == 10 and now_utc.day > 24 and now_utc.weekday() == 6: 
+                timezone_offset_hours = 1 
             
-            current_signal_ratings = new_ratings
+            now_local = now_utc + timedelta(hours=timezone_offset_hours)
             
-            print(f"--- Datauppdatering klar: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+            if now_local.hour in SUMMARY_SCHEDULE_HOURS and now_local.minute == 0:
+                debounce_key = f"{REDIS_SUMMARY_KEY}:{now_local.strftime('%Y%m%d_%H')}"
+                if redis_instance and redis_instance.set(debounce_key, 1, ex=3600*1, nx=True): 
+                    data = get_data_from_redis()
+                    if data:
+                        msg = format_summary_for_telegram(data, data.get('EUR_SEK_RATE', 11.0), timezone_offset_hours)
+                        if send_telegram_message(msg): logger.info("✅ Sammanfattning skickad.")
+            time.sleep(60)
+        except Exception as e:
+            logger.error(f"❌ Fel i schema-tråd: {e}")
+            time.sleep(60)
 
-            # --- SLUT PÅ LÅST BLOCK ---
-        
-        # SERVER-STYRD VÄNTETID (Helt oberoende av webbläsaren)
-        time.sleep(UPDATE_INTERVAL_SECONDS_DATA) # Väntar 60 sekunder
-        
-# =========================================================================
-# === DASH KOMPONENTER OCH LAYOUT ===
-# =========================================================================
+if r:
+    threading.Thread(target=background_data_fetch, args=(r,), daemon=True).start()
+    threading.Thread(target=background_summary_sender, args=(r,), daemon=True).start()
 
-# Funktionen för att skapa instrumentpanelens layout
-def create_dashboard_layout():
-    # --- WEBBFÄRGER/TEMA DEFINITION ---
-    DARK_BACKGROUND = '#2d3748' # Mörk bakgrund
-    LIGHT_TEXT = '#edf2f7'      # Ljus text
-    CARD_BACKGROUND_CONTRAST = '#4a5568' # Bakgrund för enskilda kort/element (inte översikt)
-    BORDER_COLOR = '#666'         # Ljusare grå kant
+# --- Dash App ---
 
-    GLOBAL_STYLE = {
-        'max-width': '2400px', 
-        'margin': '0 auto', 
-        'font-family': 'Arial, sans-serif',
-        'background-color': DARK_BACKGROUND,
-        'color': LIGHT_TEXT,
-        'padding': '20px'
-    }
-
-    HEADER_STYLE = {'text-align': 'center', 'color': LIGHT_TEXT, 'margin-bottom': '20px'}
-
-    return html.Div([
-        # Titel och uppdateringsintervall
-        html.H1("📈 Real-Time Multi-Timeframe Krypto-Övervakning (MTS)", style=HEADER_STYLE),
-        
-        # Intervallet används BARA för att UPPDATERA WEBBPLATSEN.
-        dcc.Interval(
-            id='web-update-interval', 
-            interval=UPDATE_INTERVAL_MS_WEB, 
-            n_intervals=0
-        ),
-        
-        # Dold div för att trigga callbacks
-        html.Div(id='background-status', style={'display': 'none'}),
-
-        html.Div(id='current-time', style={'text-align': 'right', 'margin-right': '20px', 'font-size': '14px', 'color': '#aaa'}),
-
-        html.Hr(style={'border-color': BORDER_COLOR}),
-
-        # --- FLYTTAD: Huvudgrafen först efter globala element ---
-        # Val av Kryptopar och KPI:er för diagrammet
-        html.Div([
-            html.Div([
-                html.Label("Välj Kryptovaluta för diagrammet:", style={'font-weight': 'bold', 'margin-right': '10px', 'color': LIGHT_TEXT}),
-                dcc.Dropdown(
-                    id='crypto-pair-dropdown',
-                    options=[{'label': k, 'value': v} for k, v in CRYPTO_PAIRS.items()],
-                    value=CRYPTO_PAIRS[DEFAULT_PAIR_KEY],
-                    style={'width': '300px', 'color': '#333'} 
-                )
-            ], style={'display': 'flex', 'align-items': 'center', 'margin-bottom': '20px'}),
-
-            ### ÄNDRING: Lagt till valutaväljare ###
-            html.Div([
-                html.Label("Välj Valuta:", style={'font-weight': 'bold', 'margin-right': '10px', 'color': LIGHT_TEXT}),
-                dcc.RadioItems(
-                    id='currency-selector',
-                    options=[
-                        {'label': 'EUR (€)', 'value': 'EUR'},
-                        {'label': 'SEK (kr)', 'value': 'SEK'},
-                    ],
-                    value='EUR', # Standardvaluta EUR
-                    labelStyle={'display': 'inline-block', 'margin-right': '15px'},
-                    style={'color': LIGHT_TEXT}
-                )
-            ], style={'display': 'flex', 'align-items': 'center', 'margin-bottom': '20px'}),
-            ### SLUT PÅ ÄNDRING ###
-            
-            # Nuvarande KPI:er för valt par (visas under dropdown)
-            html.Div(id='selected-pair-kpis', style={'margin-top': '10px', 'font-size': '16px', 'padding': '10px', 'border': f'1px dashed {BORDER_COLOR}', 'background-color': CARD_BACKGROUND_CONTRAST, 'border-radius': '5px'}),
-
-        ], style={'margin': '20px', 'padding': '10px'}),
-        
-        dcc.Graph(id='live-graph', config={'displayModeBar': False}),
-        
-        html.Hr(style={'border-color': BORDER_COLOR}),
-
-        # Översiktstabell (Nu under diagrammet)
-        html.H2("📊 Översikt och Signalbetyg (Max +/-10)", style={'margin-left': '20px', 'margin-top': '20px', 'color': LIGHT_TEXT}),
-        html.Div(id='summary-table-container', style={'margin': '20px', 'padding': '10px', 'background-color': '#000000', 'border': f'1px solid {BORDER_COLOR}', 'border-radius': '5px'}),
-        
-        # Dold div, används för att trigga data-beroende callbacks
-        html.Div(id='hidden-data-refresh', style={'display': 'none'})
-
-    ], style=GLOBAL_STYLE) 
-
-# --- DASH CALLBACKS (Interaktion och Uppdatering) ---
-
-# Callback för att uppdatera klockslag och simulera en data-refresh för webben
-@app.callback(
-    [Output('current-time', 'children'),
-     Output('hidden-data-refresh', 'children')],
-    Input('web-update-interval', 'n_intervals')
-)
-def update_web_only(n):
-    """
-    Uppdaterar klockan och triggar de övriga callbacksen.
-    """
-    current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    return current_time_str, f"Webbdata redo för uppdatering {n} gånger."
-
-
-### ÄNDRING: Lyssnar nu på valutaväljaren ###
-@app.callback(
-    Output('summary-table-container', 'children'),
-    [Input('hidden-data-refresh', 'children'),
-     Input('currency-selector', 'value')]
-)
-def update_summary_table(hidden_refresh, selected_currency):
-    
-    # --- TEMAVARIABLER DEFINIERAS LOKALT ---
-    LIGHT_TEXT = '#edf2f7'         
-    CARD_ROW_BACKGROUND = '#000000' 
-    # ----------------------------------------
-    
-    # Läs globala variabler under lås
-    with data_lock:
-        local_kpi_cache = global_kpi_cache.copy()
-
-    # SÄKERHETSKONTROLL
-    if not local_kpi_cache or not local_kpi_cache.get(CRYPTO_PAIRS[DEFAULT_PAIR_KEY], {}).get('price_eur'): # Kontrollera EUR
-        return html.Div("Väntar på första datahämtningen...", style={'color': '#777'})
-
-    # --- Ställ in nycklar och formatering baserat på vald valuta ---
-    if selected_currency == 'EUR':
-        price_key = 'price_eur'
-        unit = "EUR"
-        format_func = format_price_eur
-    else:
-        price_key = 'price_sek'
-        unit = "SEK"
-        format_func = format_price_sek
-    # ---
-
-    # Återanvänd Dark Theme färger
-    DARK_HEADER_BG = '#333'
-    TABLE_STYLE = {'width': '100%', 'border-collapse': 'collapse', 'color': LIGHT_TEXT, 'border': '1px solid #666'}
-    CELL_STYLE = {'padding': '8px', 'border': '1px solid #444', 'text-align': 'right'}
-    LEFT_CELL_STYLE = {'padding': '8px', 'border': '1px solid #444', 'text-align': 'left'}
-    HEADER_CELL_STYLE = {'background-color': DARK_HEADER_BG, 'color': LIGHT_TEXT, 'font-weight': 'bold', 'padding': '10px'}
-
-    
-    # NY SORTERING - Numeriskt fallande (Högst signalbetyg överst)
-    def get_rating_for_sort(pair_ticker):
-        # Sortera efter det faktiska signalbetyget (rating) numeriskt
-        return local_kpi_cache.get(pair_ticker, {}).get('signal_rating') or 0
-        
-    sorted_pairs = sorted(
-        CRYPTO_PAIRS.items(),
-        key=lambda item: get_rating_for_sort(item[1]),
-        reverse=True # Högst betyg (+10) först
-    )
-    
-    # Justering av kolumnbredder (Krypto till 150px)
-    table_header = [
-        html.Thead(html.Tr([
-            html.Th("Krypto", style={**LEFT_CELL_STYLE, **HEADER_CELL_STYLE, 'width': '150px'}), 
-            html.Th(f"Pris ({unit})", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '100px'}), # Dynamisk enhet
-            html.Th("30m %", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '80px'}),
-            html.Th("100m %", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '80px'}),
-            html.Th("360m %", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '80px'}),
-            html.Th("24h %", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '80px'}), 
-            html.Th("7d %", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '80px'}),
-            html.Th("30d %", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '80px'}),
-            html.Th("SIGNALBETYG", style={**CELL_STYLE, **HEADER_CELL_STYLE, 'width': '100px', 'text-align': 'center'}), 
-            html.Th("MTS-Signal", style={**LEFT_CELL_STYLE, **HEADER_CELL_STYLE, 'width': '160px'}), 
-            html.Th("30m Trend", style={**LEFT_CELL_STYLE, **HEADER_CELL_STYLE, 'width': '40px'}), 
-        ]))
-    ]
-    
-    table_rows = []
-    
-    for pair_key, pair_ticker in sorted_pairs:
-        kpi = local_kpi_cache.get(pair_ticker, {})
-
-        
-        # --- ANVÄND .get() MED FALLBACK FÖR ALLA NYCKLAR ---
-
-        price_val = kpi.get(price_key) # Dynamiskt pris
-        percent_24h = kpi.get('percent_change_24h') # Valutaneutral
-        percent_7d = kpi.get('percent_7d') # Från SEK-logik
-        percent_30d = kpi.get('percent_30d') # Från SEK-logik
-        percent_100m = kpi.get('percent_change_100m') # Från SEK-logik
-        percent_360m = kpi.get('percent_change_360m') # Från SEK-logik
-        diff_24h_eur = kpi.get('formel')
-
-        
-        # Hämta 30m procent och trend (Linjär Regression)
-        percent_30m_linreg = kpi.get('trend_30m_percent')
-        trend_30m_color = kpi.get('trend_30m_color', '#555555')
-        
-        # SÄKERSTÄLL ATT SIGNAL_RATING ALDRIG ÄR NONE
-        signal_rating = kpi.get('signal_rating')
-        signal_rating_display = f"{signal_rating:+}" if signal_rating is not None else 'N/A'
-        
-        signal_text = kpi.get('signal_text', "Väntar på data")
-        signal_color = kpi.get('signal_color', '#444444')
-
-        # Cell-formatering för Signalbetyg
-        rating_style = {
-            **CELL_STYLE,
-            'text-align': 'center',
-            'font-weight': 'bold',
-            'background-color': signal_color,
-            'color': LIGHT_TEXT 
-        }
-        
-        # Cell-formatering för 30m Trend (Endast Färg)
-        trend_30m_style = {
-            **CELL_STYLE,
-            'background-color': trend_30m_color,
-            'color': trend_30m_color, # Textfärgen matchar bakgrunden (döljer texten)
-            'width': '40px'
-        }
-        
-        # Sätt färg på % kolumner
-        def get_percent_style(percent_val):
-            style = CELL_STYLE.copy()
-            if percent_val is None: return style
-            if percent_val > 0.5: style['color'] = '#00FA9A' # Stark Grön
-            elif percent_val > 0: style['color'] = '#3CB371' # Grön
-            elif percent_val < -0.5: style['color'] = '#B22222' # Stark Röd
-            elif percent_val < 0: style['color'] = '#FF6347' # Röd
-            return style
-
-        row_cells = [
-            html.Td(pair_key, style={**LEFT_CELL_STYLE, 'font-weight': 'bold'}),
-            html.Td(format_func(price_val), style={**CELL_STYLE, 'color': LIGHT_TEXT}), # Dynamisk formatering
-            html.Td(format_percent(percent_30m_linreg), style=get_percent_style(percent_30m_linreg)), 
-            html.Td(format_percent(percent_100m), style=get_percent_style(percent_100m)),
-            html.Td(format_percent(percent_360m), style=get_percent_style(percent_360m)),
-            html.Td(format_percent(percent_24h), style=get_percent_style(percent_24h)), 
-            html.Td(format_percent(percent_7d), style=get_percent_style(percent_7d)),
-            html.Td(format_percent(percent_30d), style=get_percent_style(percent_30d)),
-            html.Td(signal_rating_display, style=rating_style), 
-            html.Td(signal_text, style={**LEFT_CELL_STYLE, 'color': LIGHT_TEXT}), 
-            html.Td(
-                diff_24h_eur,
-                style={
-                     **trend_30m_style,
-                     'color': 'black'
-                }
-            ), # VISAR ENDAST FÄRG
-        ]
-        
-        table_rows.append(html.Tr(row_cells, style={'background-color': CARD_ROW_BACKGROUND}))
-
-    table_body = [html.Tbody(table_rows)]
-
-    return html.Table(table_header + table_body, style=TABLE_STYLE)
-### SLUT PÅ ÄNDRING ###
-
-
-### ÄNDRING: Lyssnar nu på valutaväljaren ###
-@app.callback(
-    Output('selected-pair-kpis', 'children'),
-    [Input('hidden-data-refresh', 'children'),
-     Input('crypto-pair-dropdown', 'value'),
-     Input('currency-selector', 'value')] # Ny Input
-)
-def update_selected_pair_kpis(hidden_refresh, selected_ticker, selected_currency):
-    
-    LIGHT_TEXT = '#edf2f7'
-    
-    # Läs globala variabler under lås
-    with data_lock:
-        local_kpi_cache = global_kpi_cache.copy()
-        
-    # SÄKERHETSKONTROLL
-    if not local_kpi_cache or selected_ticker not in local_kpi_cache or not local_kpi_cache[selected_ticker].get('price_eur'):
-        return html.Div("Väntar på data för det valda paret...", style={'color': '#aaa'})
-         
-    kpi = local_kpi_cache[selected_ticker]
-
-    # --- Ställ in nycklar och formatering baserat på vald valuta ---
-    if selected_currency == 'EUR':
-        price_key = 'price_eur'
-        high_key = 'high_24h_eur'
-        low_key = 'low_24h_eur'
-        unit = "€"
-        format_func = format_price_eur
-    else:
-        price_key = 'price_sek'
-        high_key = 'high_24h_sek'
-        low_key = 'low_24h_sek'
-        unit = "SEK"
-        format_func = format_price_sek
-    # ---
-    
-    current_price = kpi.get(price_key)
-    high_24h = kpi.get(high_key)
-    low_24h = kpi.get(low_key)
-    percent_24h = kpi.get('percent_change_24h') # Valutaneutral
-    percent_7d = kpi.get('percent_7d') # Från SEK-logik
-    percent_30d = kpi.get('percent_30d') # Från SEK-logik
-    
-    def color_text_by_percent(value):
-        color = LIGHT_TEXT
-        if value is not None:
-            if value > 0.5: color = '#00FA9A'
-            elif value > 0: color = '#3CB371'
-            elif value < -0.5: color = '#B22222'
-            elif value < 0: color = '#FF6347'
-        return color
-
-    data_list = [
-        html.P([html.Strong("Aktuellt Pris: ", style={'color': '#ADD8E6'}), f"{format_func(current_price)} {unit}"], style={'color': LIGHT_TEXT}),
-        html.P([html.Strong("24h Förändring: ", style={'color': '#ADD8E6'}), html.Span(format_percent(percent_24h), style={'color': color_text_by_percent(percent_24h)})]),
-        html.P([html.Strong(f"24h Hög/Låg: ", style={'color': '#ADD8E6'}), f"{format_func(high_24h)} {unit} / {format_func(low_24h)} {unit}"], style={'color': LIGHT_TEXT}),
-        html.P([html.Strong("7d Förändring: ", style={'color': '#ADD8E6'}), html.Span(format_percent(percent_7d), style={'color': color_text_by_percent(percent_7d)})]),
-        html.P([html.Strong("30d Förändring: ", style={'color': '#ADD8E6'}), html.Span(format_percent(percent_30d), style={'color': color_text_by_percent(percent_30d)})]),
-    ]
-    
-    return html.Div(data_list)
-### SLUT PÅ ÄNDRING ###
-
-### ÄNDRING: Lyssnar nu på valutaväljaren ###
-@app.callback(
-    Output('live-graph', 'figure'),
-    [Input('hidden-data-refresh', 'children'),
-     Input('crypto-pair-dropdown', 'value'),
-     Input('currency-selector', 'value')] # Ny Input
-)
-def update_graph(hidden_refresh, selected_ticker, selected_currency):
-    
-    # Läs globala variabler under lås
-    with data_lock:
-        history = data_history.get(selected_ticker, collections.deque())
-        kpi = global_kpi_cache.get(selected_ticker, {}) # Hämta KPI
-    
-    # Använd lokal kopia av historik för att skapa DataFrame utanför låset
-    local_history = list(history)
-    
-    # SÄKERHETSKONTROLL 1: Kontrollera om historiken är för kort eller om KPI saknas
-    if not local_history or len(local_history) < 2 or not kpi or not kpi.get('price_eur'):
-        return go.Figure(layout=go.Layout(
-            title="Väntar på pris- och KPI-data...",
-            xaxis={'visible': False},
-            yaxis={'visible': False},
-            template="plotly_dark"
-        ))
-    
-    # --- Ställ in nycklar och formatering baserat på vald valuta ---
-    if selected_currency == 'EUR':
-        price_key = 'price_eur'
-        high_key = 'high_24h_eur'
-        low_key = 'low_24h_eur'
-        unit = "EUR"
-    else:
-        price_key = 'price_sek'
-        high_key = 'high_24h_sek'
-        low_key = 'low_24h_sek'
-        unit = "SEK"
-    # ---
-
-    # --- Hämta 24h Hög/Låg från KPI-cachen ---
-    high_24h = kpi.get(high_key)
-    low_24h = kpi.get(low_key)
-    
-    # Använd endast de senaste 360 punkterna (maxlängd) för grafritning
-    df = pd.DataFrame(local_history) # Använd hela historiken (max 360 punkter)
-    df = df[df[price_key] > 0.0] # Filtrera baserat på vald valuta
-    
-    # SÄKERHETSKONTROLL 2: Om alla priser var 0 i början
-    if df.empty:
-        return go.Figure(layout=go.Layout(
-            title="Väntar på första meningsfulla prisdatan...",
-            xaxis={'visible': False},
-            yaxis={'visible': False},
-            template="plotly_dark"
-        ))
-
-    # BERÄKNA FLERA SMA:er
-    sma_data = {
-        30: {'name': '30m SMA', 'color': '#FFD700'},  # Guld
-        100: {'name': '100m SMA', 'color': '#008000'}, # Grön
-        360: {'name': '360m SMA', 'color': '#B22222'}, # Eldtegel
-    }
-    
-    for window, details in sma_data.items():
-        df[f'SMA_{window}'] = calculate_sma(df, window, price_key) # Använd rätt price_key
-    
-    pair_key = next((key for key, value in CRYPTO_PAIRS.items() if value == selected_ticker), selected_ticker)
-    
-    fig = go.Figure()
-    
-    # Prislinje
-    fig.add_trace(go.Scatter(
-        x=df['time'], 
-        y=df[price_key], # Dynamiskt pris
-        mode='lines', 
-        name=f'{pair_key} Pris',
-        line=dict(color='#00BFFF', width=2) # Djupt himmelsblå
-    ))
-    
-    # Lägg till alla SMA:er i grafen
-    for window, details in sma_data.items():
-        fig.add_trace(go.Scatter(
-            x=df['time'], 
-            y=df[f'SMA_{window}'], 
-            mode='lines', 
-            name=details['name'],
-            line=dict(color=details['color'], width=2, dash='dot')
-        ))
-
-    # --- Lägg till horisontella linjer för 24h Hög/Låg ---
-    shapes = []
-    annotations = []
-
-    if high_24h is not None and high_24h > 0:
-        shapes.append(
-            dict(
-                type="line",
-                xref="paper", yref="y",
-                x0=0, y0=high_24h, x1=1, y1=high_24h,
-                line=dict(color="#00FA9A", width=1, dash="dash") # NY FÄRG: GRÖN (Högst)
-            )
-        )
-        annotations.append(
-            dict(
-                xref="paper", yref="y", x=1.0, y=high_24h, 
-                text="24h Högst", showarrow=False, 
-                xanchor='left', yanchor='middle', 
-                font=dict(color="#00FA9A", size=10) # NY FÄRG
-            )
-        )
-        
-    if low_24h is not None and low_24h > 0:
-        shapes.append(
-            dict(
-                type="line",
-                xref="paper", yref="y",
-                x0=0, y0=low_24h, x1=1, y1=low_24h,
-                line=dict(color="#B22222", width=1, dash="dash") # NY FÄRG: RÖD (Lägst)
-            )
-        )
-        annotations.append(
-            dict(
-                xref="paper", yref="y", x=1.0, y=low_24h, 
-                text="24h Lägst", showarrow=False, 
-                xanchor='left', yanchor='middle', 
-                font=dict(color="#B22222", size=10) # NY FÄRG
-            )
-        )
-    # --- SLUT Lägg till horisontella linjer ---
-
-    fig.update_layout(
-        title=f'Prisutveckling för {pair_key} (Senaste {len(df)} min)',
-        xaxis_title='Tid',
-        yaxis_title=f'Pris ({unit})', # Dynamisk Y-axel
-        hovermode="x unified",
-        template="plotly_dark", # Använd det mörka Plotly-temat
-        margin=dict(l=40, r=40, t=40, b=20),
-        shapes=shapes,
-        annotations=annotations,
-        # Lägg till en layout justering för att säkerställa att legend visas bra
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        )
-    )
-
-    return fig
-### SLUT PÅ ÄNDRING ###
-
-# Lägg till denna rad för att exponera server-instansen för Gunicorn/Render
+app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
-# VIKTIGT: Sätt layouten globalt så att den finns när Gunicorn startar servern.
-app.layout = create_dashboard_layout()
+
+def create_summary_row(symbol, label, price, percent_data, trade_value, currency, is_selected, eur_to_sek):
+    row_style = {'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '5px 0', 'borderBottom': '1px solid #eee', 'fontSize': '0.85em', 'cursor': 'pointer', 'backgroundColor': '#fff'}
+    if is_selected:
+        row_style['backgroundColor'] = '#e6f7ff'
+        row_style['border'] = '1px solid #0056b3'
+    
+    change_24h = percent_data.get('24h')
+    price_str = format_price_display(price)
+    
+    change_str = ""
+    change_color = '#495057'
+    if change_24h is not None:
+        if change_24h >= 0.01: 
+            change_color = '#28a745'
+            change_str = f" (+{change_24h:.2f}%)"
+        elif change_24h <= -0.01: 
+            change_color = '#dc3545'
+            change_str = f" ({change_24h:.2f}%)"
+        else:
+            change_str = f" ({change_24h:.2f}%)"
+
+    price_div = html.Div([
+        html.Span(price_str, style={'color': '#495057'}),
+        html.Span(change_str, style={'color': change_color, 'fontSize': '0.9em', 'fontWeight': 'normal'})
+    ], style={'flex': '0 0 140px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'})
+    
+    cols = [
+        html.Div(html.Span(f"{CRYPTO_EMOJIS.get(symbol, '')} {label}", style={'fontWeight': 'bold', 'color': '#0056b3' if is_selected else '#495057'}), style={'flex': '0 0 160px', 'paddingLeft': '5px'}),
+        price_div, 
+        html.Div(format_change(percent_data.get('30m')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('1h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('3h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('6h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('12h')), style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div(format_change(percent_data.get('7d')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('30d')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 80px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}),
+    ]
+
+    return html.Div(cols, id={'type': 'summary-card', 'index': symbol}, style=row_style)
+
+def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None): 
+    if individual_trends is None: individual_trends = {}
+        
+    price_text = f"{format_price_display(price)} {currency}"
+    coin_emoji = CRYPTO_EMOJIS.get(symbol, '')
+    change_24h = percent_data.get('24h') 
+    price_color = '#28a745' if change_24h and change_24h > 0 else '#dc3545' if change_24h and change_24h < 0 else '#495057'
+    trade_value_color = '#006400' if trade_value and trade_value > 0 else '#8B0000' if trade_value and trade_value < 0 else '#495057'
+    
+    multiplier = 1
+    high_display, low_display = None, None
+    if high_eur is not None and low_eur is not None and base_price_eur:
+        if currency == 'SEK':
+            multiplier = base_price_eur 
+        elif currency == 'EUR':
+            multiplier = 1
+        elif base_price_eur and currency in COINS_SYMBOLS:
+            multiplier = 1 / base_price_eur
+        else:
+            multiplier = 1 
+            
+        high_display = high_eur * multiplier
+        low_display = low_eur * multiplier
+
+    def create_change_row(period, value):
+        display_name = {'7d': '7dgr', '30d': '30dgr', '6m': '6mån', '1y': '1år', '30m': '30min'}.get(period, period)
+        return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
+                        children=[html.Span(f"{display_name.capitalize()}:", style={'color': '#6c757d', 'flex': '0 0 50px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
+        
+    short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
+    long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
+
+    diff_24h_base = None
+    if diff_24h_eur is not None:
+        if currency == 'SEK':
+            diff_24h_base = diff_24h_eur * (base_price_eur if base_price_eur else 1.0)
+        elif currency == 'EUR':
+            diff_24h_base = diff_24h_eur
+        elif currency in COINS_SYMBOLS and base_price_eur:
+            diff_24h_base = diff_24h_eur / base_price_eur 
+
+    main_price_section = html.Div(style={'flex': '1 1 300px', 'minWidth': '300px', 'paddingRight': '15px'}, children=[
+        html.H2(html.Span([html.Span(f"{coin_emoji} ", style={'marginRight': '5px'}), f"{label} ({symbol})"]), style={'fontSize': '1.5em', 'color': '#0056b3', 'marginBottom': '5px', 'textAlign': 'center'}),
+        
+        html.Div(style={'textAlign': 'center', 'marginTop': '10px'}, children=[
+            html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.9em'}),
+            html.P(price_text, id='current-price-display', style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'}),
+        ]),
+        
+        html.Div(style={'textAlign': 'center', 'fontSize': '0.9em', 'fontWeight': '600', 'color': price_color, 'margin': '0'}, children=[
+            html.Span(f"({'+' if diff_24h_base >= 0 else ''}{diff_24h_base:,.4f} {currency}, ", style={'marginRight': '0px'}),
+            format_change(change_24h), 
+            html.Span(")")
+        ] if diff_24h_base is not None else html.P("24h Diff: N/A", style={'fontSize': '0.8em', 'color': '#6c757d'})),
+
+        html.Div(style={'textAlign': 'center', 'marginTop': '15px', 'padding': '5px 0', 'borderTop': '1px solid #dee2e6'}, children=[
+            html.P("Handelsvärde (Viktad Trendindikator)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.8em'}),
+            html.P(f"{trade_value:,.2f}" if trade_value is not None else "N/A", style={'fontSize': '1.8em', 'fontWeight': '800', 'color': trade_value_color, 'margin': '0'})
+        ])
+    ])
+
+    # Sektion för Prisrörelser (UPPDATERAD med 6m/1y)
+    changes_section = html.Div(style={'flex': '1 1 250px', 'minWidth': '250px', 'padding': '0 15px', 'borderLeft': '1px solid #dee2e6'}, children=[
+        html.P("Prisrörelser (%) & 24h Intervall", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
+        
+        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': '1px solid #dee2e6', 'fontSize': '0.9em'}, children=[
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '5px'}, children=[
+                html.Span("Hög 24h:", style={'fontWeight': 'bold', 'color': 'green'}), 
+                html.Span(f"{format_price_display(high_display)} {currency}" if high_display is not None else "N/A", style={'color': 'green', 'fontWeight': '600'})
+            ]),
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-between'}, children=[
+                html.Span("Låg 24h:", style={'fontWeight': 'bold', 'color': 'red'}), 
+                html.Span(f"{format_price_display(low_display)} {currency}" if low_display is not None else "N/A", style={'color': 'red', 'fontWeight': '600'})
+            ]),
+        ]),
+        
+        html.Div(style={'paddingTop': '10px', 'display': 'grid', 'gridTemplateColumns': '1fr 1fr', 'gap': '5px 10px'}, children=[
+            create_change_row('30m', format_change(percent_data.get('30m'))),
+            create_change_row('18h', format_change(percent_data.get('18h'))),
+            create_change_row('1h', format_change(percent_data.get('1h'))),
+            create_change_row('7d', format_change(percent_data.get('7d'))), 
+            create_change_row('3h', format_change(percent_data.get('3h'))),
+            create_change_row('30d', format_change(percent_data.get('30d'))),
+            create_change_row('6h', format_change(percent_data.get('6h'))),
+            create_change_row('6m', format_change(percent_data.get('6m'))),
+            create_change_row('12h', format_change(percent_data.get('12h'))),
+            create_change_row('1y', format_change(percent_data.get('1y'))),
+
+        ])
+    ])
+
+    # --- LOKAL FUNKTION FÖR ATT RENDERA TRENDRADEN ---
+    def render_trend_row(key):
+        data_obj = individual_trends.get(key)
+        # Hantera både gammalt format (float) och nytt format (dict) för säkerhets skull
+        val = None
+        trend_price = None
+        
+        if isinstance(data_obj, dict):
+            val = data_obj.get('val')
+            raw_price = data_obj.get('price')
+            if raw_price is not None:
+                # Omvandla trendpriset till vald valuta (SEK etc) med multiplier
+                trend_price = raw_price * multiplier
+        elif isinstance(data_obj, (int, float)):
+            val = data_obj
+
+        val_str = f"{val:,.2f}" if val is not None else "N/A"
+        price_str = f" ({format_price_display(trend_price)})" if trend_price is not None else ""
+        
+        color = '#6c757d'
+        if val is not None:
+            if val > 0: color = '#006400'
+            elif val < 0: color = '#8B0000'
+
+        return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
+            html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+            html.Span(f"{val_str}{price_str}", style={'color': color, 'fontWeight': '600'})
+        ])
+    # -------------------------------------------------
+
+    # Sektion för Trendvärden (UPPDATERAD med 6m/1y)
+    trend_section = html.Div(style={'flex': '1 1 200px', 'minWidth': '200px', 'paddingLeft': '15px', 'borderLeft': '1px solid #dee2e6'}, children=[
+        html.P("Trendvärden (Hₓ) - Riktning/Vikt", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
+        
+        html.P("Kort Sikt (5m data)", style={'margin': '0 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold'}),
+        html.Div([
+            render_trend_row(key) for key in short_term_keys if key in individual_trends 
+        ]),
+        
+        html.P("Lång Sikt (1d data)", style={'margin': '10px 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold', 'borderTop': '1px dotted #dee2e6', 'paddingTop': '5px'}),
+        html.Div([
+            render_trend_row(key) for key in long_term_keys if key in individual_trends 
+        ]),
+    ])
+
+    return html.Div(id='current-price-box', style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'}, children=[
+            html.Div(style={'display': 'flex', 'justifyContent': 'space-around', 'alignItems': 'flex-start', 'flexWrap': 'wrap', 'gap': '10px'}, children=[
+                main_price_section, 
+                changes_section, 
+                trend_section
+            ])
+        ])
 
 
-# --- INITIALISERING OCH KÖRNING ---
+app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
+    html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
+        html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
+        html.Div(style={'display': 'flex', 'gap': '20px', 'marginBottom': '20px', 'flexWrap': 'wrap'}, children=[
+            html.Div(style={'flex': '0 0 200px', 'minWidth': '200px'}, children=[
+                html.H3('⚙️ Kontroller', style={'fontSize': '1.3em', 'color': '#495057', 'marginBottom': '15px'}),
+                html.Div(style={'marginBottom': '20px'}, children=[
+                    html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
+                    dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_COIN_SYMBOL, clearable=False),
+                ]),
+                html.Div(children=[
+                    html.Label("Välj basvaluta/krypto:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
+                    dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in BASE_CURRENCIES], value='EUR', clearable=False),
+                ]),
+            ]),
+            html.Div(style={'flex': '1 1 600px', 'minWidth': '600px'}, children=[
+                html.Div(id='current-price-summary-box-container'),
+                html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '0px'}),
+            ]),
+            dcc.Store(id='chart-data-store'), 
+            dcc.Store(id='current-currency-store'),
+            dcc.Store(id='initial-coin-symbol-store', data=DEFAULT_COIN_SYMBOL),
+            # --- NY STORE FÖR SORTERING ---
+            dcc.Store(id='table-sort-store', data={'key': 'sort_tv', 'asc': False}), 
+        ]),
+        
+        html.Div(style={'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
+            html.Div(style={'textAlign': 'center', 'marginBottom': '10px'}, children=[
+                 html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px', 'fontSize': '0.9em'}),
+                 dcc.Checklist(
+                     id='trendline-checkboxes',
+                     options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items() if config.get('show_line')],
+                     value=[k for k, v in TREND_WINDOWS.items() if v.get('show_line')], 
+                     inline=True,
+                     style={'display': 'inline-block'}
+                 ),
+            ]),
+            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
+        ]),
+        
+        html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
+             html.H3('📊 Sammanfattning: Handelsvärde & Prisrörelser', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
+             dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
+        ]),
+        
+        html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
+            html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0'}),
+            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap'}, children=[
+                html.Div([
+                    html.P('**Prisrörelser (%):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0 0 5px 0'}),
+                    html.Ul([html.Li(f'+{t}%' if t > 0 else f'{t}%') for t in ALERT_THRESHOLDS_UP[::-1] + ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
+                ]),
+                html.Div([
+                    html.P('**Handelsvärde (H.V.) (Endast Positiv):**', style={'fontWeight': 'bold', 'color': '#006400', 'margin': '0 0 5px 0'}),
+                    html.Ul([html.Li(f'+{t}') for t in TRADE_VALUE_ALERTS], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'}) 
+                ]),
+            ]),
+            html.P(f"Obs! Samma alert skickas max en gång per {ALERT_DEBOUNCE_SECONDS / 3600:.0f} timme (Pris och H.V. har separata spärrar).", style={'fontSize': '0.9em', 'color': '#6c757d', 'marginTop': '10px'}),
+            html.P(f"**Schemalagda sammanställningar skickas kl: {', '.join([f'{h:02d}:00' for h in SUMMARY_SCHEDULE_HOURS])} (CET/CEST)**", style={'fontSize': '0.9em', 'color': '#17a2b8', 'marginTop': '10px', 'fontWeight': 'bold'}),
+        ]),
+    ]),
+    dcc.Interval(id='interval-component', interval=UPDATE_INTERVAL_SECONDS_DATA*1000, n_intervals=0)
+])
+
+# --- NY CALLBACK FÖR ATT UPPDATERA SORTERINGEN ---
+@app.callback(
+    Output('table-sort-store', 'data'),
+    Input({'type': 'sort-header', 'index': ALL}, 'n_clicks'),
+    State('table-sort-store', 'data'),
+    prevent_initial_call=True
+)
+def update_table_sort_store(n_clicks, current_sort):
+    ctx_triggered = ctx.triggered_id
+    if not ctx_triggered or not any(n_clicks):
+        return dash.no_update
+    
+    clicked_key = ctx_triggered['index']
+    
+    # Om vi klickar på samma kolumn, byt riktning
+    if clicked_key == current_sort['key']:
+        return {'key': clicked_key, 'asc': not current_sort['asc']}
+    
+    # Om ny kolumn, sätt den som ny nyckel och standardisera till fallande för siffror
+    return {'key': clicked_key, 'asc': False}
+
+@app.callback(
+    Output('current-price-summary-box-container', 'children'), 
+    Output('last-updated', 'children'),
+    Output('chart-data-store', 'data'), 
+    Output('current-currency-store', 'data'), 
+    Output('crypto-summary', 'children'),
+    [Input('interval-component', 'n_intervals'), 
+     Input('coin-dropdown', 'value'), 
+     Input('currency-dropdown', 'value'),
+     Input('table-sort-store', 'data')] # <--- NY INPUT HÄR
+)
+def update_all_live_data(n, coin_symbol, currency, sort_settings):
+    # Hantera om sort_settings saknas vid första laddning
+    if not sort_settings:
+        sort_settings = {'key': 'sort_tv', 'asc': False}
+
+    data = get_data_from_redis()
+    if data is None or 'EUR_SEK_RATE' not in data:
+        loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, None, None, {}, None, {}, None)
+        return loading_box, "Väntar...", None, currency, html.Div("Laddar...")
+
+    eur_to_sek = data.get('EUR_SEK_RATE', 11.0)
+    coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+    timestamp = data.get('timestamp')
+    local_timestamp = timestamp + 3600 
+    updated_text = f"Senast uppdaterad: {time.strftime('%H:%M:%S', time.gmtime(local_timestamp))} Lokal tid (CET/CEST)"
+    current_price_eur = data.get(f'{coin_symbol}/EUR')
+    diff_24h_eur = data.get(f'{coin_symbol}/DIFF_24H_EUR') 
+    base_price_eur = 1.0 
+
+    if currency == 'SEK':
+        base_price_eur = eur_to_sek 
+        current_price_base = current_price_eur * eur_to_sek if current_price_eur is not None else None
+    elif currency == 'EUR':
+        current_price_base = current_price_eur
+    elif currency in COINS_SYMBOLS:
+        base_price_eur = data.get(f'{currency}/EUR') 
+        current_price_base = (current_price_eur / base_price_eur) if current_price_eur and base_price_eur else None
+    else:
+        current_price_base = current_price_eur
+
+    selected_ticker = CRYPTO_PAIRS.get(coin_label, f'{coin_symbol}/EUR')
+    ohlc_interval = OHLC_CACHE_INTERVAL_MIN 
+    hist_data_5min = json.loads(r.get(f'OHLC_CACHED_{ohlc_interval}MIN_{selected_ticker}') or '[]') if r else []
+    hist_data_1day = json.loads(r.get(f'OHLC_1DAY_{selected_ticker}') or '[]') if r else []
+    
+    trade_value, individual_trends, chart_data_store = None, {}, None
+    if hist_data_5min and current_price_eur is not None:
+        hist_5min_curr = hist_data_5min + [{'time': timestamp, 'price': current_price_eur}]
+        hist_1day_curr = hist_data_1day + [{'time': timestamp, 'price': current_price_eur}]
+        
+        trade_value, individual_trends = calculate_trade_value(hist_5min_curr, current_price_eur, hist_1day_curr)
+        
+        prices_eur = [item['price'] for item in hist_5min_curr]
+        chart_data_store = {
+            'historical_data': hist_5min_curr, 
+            'current_price_eur': current_price_eur, 
+            'max_ohlc_eur': max(prices_eur) if prices_eur else None, 
+            'min_ohlc_eur': min(prices_eur) if prices_eur else None, 
+            'eur_to_sek': eur_to_sek, 
+            'base_price_eur': base_price_eur, 
+            'coin_symbol': coin_symbol, 
+            'trade_value': trade_value,
+            'individual_trends': individual_trends 
+        }
+
+    percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol, {})
+    range_data = data.get('ALL_24H_RANGE_OHLC', {}).get(coin_symbol, {})
+    
+    summary_box = create_selected_coin_box(coin_label, coin_symbol, current_price_base or 0.0, currency, base_price_eur, range_data.get('high_eur'), range_data.get('low_eur'), percent_data, trade_value, individual_trends, diff_24h_eur)
+        
+    summary_data = []
+    for label in COINS_LABELS:
+        sl = label.split(' ')[0]
+        tl = CRYPTO_PAIRS[label]
+        pe = data.get(f'{sl}/EUR')
+        pd = data.get('ALL_PERCENT_CHANGE', {}).get(sl, {})
+        h5 = json.loads(r.get(f'OHLC_CACHED_{ohlc_interval}MIN_{tl}') or '[]') if r else []
+        h1 = json.loads(r.get(f'OHLC_1DAY_{tl}') or '[]') if r else []
+        
+        tv_int = None
+        if h5 and pe:
+            tv_val, _ = calculate_trade_value(h5 + [{'time': timestamp, 'price': pe}], pe, h1 + [{'time': timestamp, 'price': pe}])
+            if tv_val is not None: tv_int = int(round(tv_val))
+        
+        pb = pe
+        if currency == 'SEK': pb = pe * eur_to_sek if pe else None
+        elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
+
+        # --- FÖRENKLAD DATASTRUKTUR FÖR SORTERING ---
+        summary_data.append({
+            'symbol': sl, 
+            'label': label, 
+            'price': pb, 
+            'percent': pd, 
+            'trade_value': tv_int, 
+            
+            # Platta nycklar för sortering
+            'sort_symbol': sl,
+            'sort_price': pb if pb is not None else -1,
+            'sort_tv': tv_int if tv_int is not None else -9999,
+            's30': pd.get('30m') if pd.get('30m') is not None else -9999,
+            's1h': pd.get('1h') if pd.get('1h') is not None else -9999,
+            's3h': pd.get('3h') if pd.get('3h') is not None else -9999,
+            's6h': pd.get('6h') if pd.get('6h') is not None else -9999,
+            's12h': pd.get('12h') if pd.get('12h') is not None else -9999,
+            's24h': pd.get('24h') if pd.get('24h') is not None else -9999,
+            's7d': pd.get('7d') if pd.get('7d') is not None else -9999,
+            's30d': pd.get('30d') if pd.get('30d') is not None else -9999
+        })
+
+    # --- DYNAMISK SORTERING ---
+    sort_key = sort_settings['key']
+    sort_asc = sort_settings['asc']
+    
+    # Sortera datan
+    summary_data.sort(
+        key=lambda x: x.get(sort_key, -9999), 
+        reverse=not sort_asc
+    )
+
+    # --- GENERERA KLICKBARA RUBRIKER ---
+    # Definiera kolumner: (Visningstext, Sorteringsnyckel, Bredd, Justering)
+    cols_config = [
+        ("Valuta", "sort_symbol", "160px", "left"),
+        (f"Pris ({currency})", "sort_price", "140px", "right"),
+        ("30m", "s30", "1", "right"),
+        ("1h", "s1h", "1", "right"),
+        ("3h", "s3h", "1", "right"),
+        ("6h", "s6h", "1", "right"),
+        ("12h", "s12h", "1", "right"),
+        ("24h", "s24h", "1", "right"),
+        ("7d", "s7d", "1", "right"),
+        ("30d", "s30d", "1", "right"),
+        ("H.V.", "sort_tv", "80px", "right")
+    ]
+    
+    header_cells = []
+    for label_text, sort_id, width_val, align_val in cols_config:
+        # Bestäm stil för rubriken
+        cell_style = {
+            'cursor': 'pointer', 
+            'userSelect': 'none',
+            'padding': '0 5px'
+        }
+        
+        # Flexhantering: Antingen fast bredd eller flex: 1
+        if "px" in width_val:
+            cell_style['flex'] = f'0 0 {width_val}'
+        else:
+            cell_style['flex'] = width_val
+            
+        cell_style['textAlign'] = align_val
+        
+        # Lägg till pil om det är denna kolumn som sorteras
+        display_text = label_text
+        if sort_id == sort_key:
+            arrow = " ▲" if sort_asc else " ▼"
+            display_text += arrow
+            cell_style['color'] = '#0056b3' # Markera aktiv sortering med blå färg
+            
+        header_cells.append(
+            html.Div(
+                display_text,
+                id={'type': 'sort-header', 'index': sort_id}, # Pattern matching ID
+                n_clicks=0,
+                style=cell_style
+            )
+        )
+
+    header_style = {
+        'display': 'flex', 
+        'justifyContent': 'space-between', 
+        'fontWeight': 'bold', 
+        'padding': '7px 0', 
+        'borderBottom': '2px solid #0056b3', 
+        'backgroundColor': '#f0f0f0', 
+        'marginBottom': '5px', 
+        'color': '#495057', 
+        'fontSize': '0.85em'
+    }
+    
+    rows = [create_summary_row(item['symbol'], item['label'], item['price'], item['percent'], item['trade_value'], currency, item['symbol'] == coin_symbol, eur_to_sek) for item in summary_data]
+    return summary_box, updated_text, chart_data_store, currency, html.Div([html.Div(header_cells, style=header_style)] + rows)
+
+@app.callback(
+    Output('live-update-graph', 'figure'),
+    [Input('chart-data-store', 'data'), Input('current-currency-store', 'data'), Input('trendline-checkboxes', 'value')],
+    [State('coin-dropdown', 'value')]
+)
+def update_trendline_visibility(chart_data_store, currency, selected_trends, coin_symbol):
+    if chart_data_store is None: return go.Figure()
+    hist_data = chart_data_store['historical_data']
+    eur_to_sek = chart_data_store['eur_to_sek']
+    base_price_eur = chart_data_store['base_price_eur'] 
+    coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+    
+    figure = go.Figure()
+    prices_eur = [item['price'] for item in hist_data]
+    
+    if currency == 'SEK': prices = [p * eur_to_sek for p in prices_eur]
+    elif currency == 'EUR': prices = prices_eur
+    elif base_price_eur: prices = [p / base_price_eur for p in prices_eur]
+    else: prices = prices_eur
+
+    times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
+    figure.add_trace(go.Scatter(x=times, y=prices, mode='lines+markers', name=f'Kurs (5 min)', line=dict(color='#0056b3', width=3)))
+
+    high_val, low_val = max(prices) if prices else None, min(prices) if prices else None
+    if high_val: figure.add_hline(y=high_val, line_dash="dash", line_color="green", annotation_text="24h Hög")
+    if low_val: figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="24h Låg", annotation_position="bottom left")
+
+    for key in selected_trends:
+        config = TREND_WINDOWS.get(key)
+        if not config or not config.get('show_line', False) or config.get('source') != '5min': continue
+        if len(hist_data) >= config['blocks']:
+            slope, intercept, start_idx = calculate_trendline(hist_data, config['blocks'])
+            trend_y_eur = slope * np.arange(config['blocks']) + intercept
+            
+            if currency == 'SEK': trend_y = trend_y_eur * eur_to_sek
+            elif currency == 'EUR': trend_y = trend_y_eur
+            elif base_price_eur: trend_y = trend_y_eur / base_price_eur
+            else: trend_y = trend_y_eur
+            
+            figure.add_trace(go.Scatter(x=times[start_idx:], y=trend_y, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash')))
+
+    figure.update_layout(title=f"Prisutveckling: {coin_label}", template="plotly_white", height=500, hovermode="x unified")
+    return figure
+
+@app.callback(
+    Output('coin-dropdown', 'value'),
+    [Input({'type': 'summary-card', 'index': ALL}, 'n_clicks'),
+     Input('initial-coin-symbol-store', 'data')],
+    [State({'type': 'summary-card', 'index': ALL}, 'id')]
+)
+def update_dropdown_selection(n_clicks, initial_coin, ids):
+    trigger = ctx.triggered_id
+    if not trigger or trigger == 'initial-coin-symbol-store':
+        return initial_coin if initial_coin else dash.no_update
+    
+    if isinstance(trigger, dict) and trigger.get('type') == 'summary-card':
+          if not any(n_clicks): return dash.no_update
+          return trigger['index']
+          
+    return dash.no_update
+
 if __name__ == '__main__':
-    
-    # 1. Ladda historik från Excel (körs en gång vid start)
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Laddar historisk data från Excel...")
-    load_historical_data()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Historisk data laddad/verifierad.")
-    
-    # 2. Skicka en testnotis via Telegram (körs en gång vid start)
-    send_test_notification()
-    
-    # 3. Sätt layout (DENNA ÄR BORTTAGEN)
-    
-    # 4. STARTA DEN DEDIKERADE BAKGRUNDSTRÅDEN
-    collector_thread = threading.Thread(target=background_data_collector)
-    collector_thread.daemon = True 
-    collector_thread.start()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Bakgrundstråd startad.")
-
-    # 5. Kör applikationen
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Startar Dash-servern på http://0.0.0.0:8050/ (host='0.0.0.0').")
-    
-    app.run(debug=False, host='0.0.0.0', port=8050)
+    port = int(os.environ.get('PORT', 8050))
+    app.run_server(debug=False, host='0.0.0.0', port=port)

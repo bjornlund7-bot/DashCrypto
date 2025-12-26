@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 REDIS_URL = os.environ.get('REDIS_URL')
 r = from_url(REDIS_URL) if REDIS_URL else None
 
-# Din fullständiga lista
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
     'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR',
@@ -44,12 +43,11 @@ CRYPTO_PAIRS = {
     'BRICK (Bricks)': 'BRICK/EUR', 'ALMANAK (Almanak)': 'ALMANAK/EUR',
 }
 
-# --- BAKGRUNDSPROCESS (WORKER) ---
+# --- BAKGRUNDSPROCESS ---
 def data_fetcher_loop():
-    logger.info("Bakgrundshämtning startad...")
     while True:
         try:
-            # 1. Ticker priser
+            # 1. Priser
             t_res = requests.get("https://api.kraken.com/0/public/Ticker", timeout=10)
             if t_res.status_code == 200:
                 res_data = t_res.json().get('result', {})
@@ -61,7 +59,7 @@ def data_fetcher_loop():
                         price = float(res_data[k_pair]['c'][0])
                         open_p = float(res_data[k_pair]['o'])
                         processed[f'{s}/EUR'] = price
-                        processed['ALL_PERCENT_CHANGE'][s] = {'24h': ((price - open_p) / open_p * 100) if open_p > 0 else 0}
+                        processed['ALL_PERCENT_CHANGE'][s] = {'24h': ((price - open_p)/open_p*100) if open_p > 0 else 0}
                 r.set('crypto_data', json.dumps(processed))
 
             # 2. OHLC (Långsam för att undvika timeout)
@@ -70,12 +68,12 @@ def data_fetcher_loop():
                     try:
                         o_res = requests.get(f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval={interval}", timeout=10)
                         if o_res.status_code == 200:
-                            raw = list(o_res.json().get('result', {}).values())[0]
+                            data = o_res.json().get('result', {})
+                            raw = list(data.values())[0]
                             clean = [{'time': i[0], 'price': float(i[4])} for i in raw[-150:]]
                             r.set(f'OHLC_CACHED_{suffix}_{pair}', json.dumps(clean))
-                        time.sleep(1.0) # Paus för att servern ska kunna svara på webbanrop
+                        time.sleep(1.2) # Paus för att servern ska andas
                     except: continue
-            logger.info("Synk-runda klar.")
         except Exception as e: logger.error(f"Loop-fel: {e}")
         time.sleep(60)
 
@@ -104,9 +102,6 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'padding': '20px', 'f
 ])
 
 def format_price(p): return f"{p:,.4f}".replace(",", " ").replace(".", ",").replace(" ", ".") if p else "0,0000"
-def format_pct(c):
-    col = '#28a745' if c > 0 else '#dc3545'
-    return html.Span(f"{'▲' if c > 0 else '▼'} {abs(c):.2f}%", style={'color': col, 'fontWeight': 'bold'})
 
 @app.callback(
     [Output('main-info-box', 'children'), Output('crypto-summary-table', 'children'), Output('live-update-graph', 'figure')],
@@ -114,7 +109,7 @@ def format_pct(c):
 )
 def update_ui(n, coin, timespan):
     cached = r.get('crypto_data') if r else None
-    if not cached: return html.Div("Laddar..."), html.Div(), go.Figure()
+    if not cached: return html.Div("Laddar..."), html.Div("Väntar på data..."), go.Figure()
     
     data = json.loads(cached)
     curr_p = data.get(f'{coin}/EUR', 0)
@@ -127,21 +122,35 @@ def update_ui(n, coin, timespan):
     fig = go.Figure()
     if h_raw:
         h = json.loads(h_raw)
-        fig.add_trace(go.Scatter(x=[datetime.fromtimestamp(i['time'], tz=timezone.utc) for i in h], 
-                                 y=[i['price'] for i in h], line=dict(color='#0056b3')))
-    fig.update_layout(title=f"{coin} - {timespan}", template="plotly_white")
+        prices = [i['price'] for i in h]
+        times = [datetime.fromtimestamp(i['time'], tz=timezone.utc) for i in h]
+        fig.add_trace(go.Scatter(x=times, y=prices, line=dict(color='#0056b3', width=2)))
+        
+        # Enkel trendlinje (Trend 1h)
+        if len(prices) > 12:
+            y = np.array(prices[-12:])
+            slope, intercept, _, _, _ = linregress(np.arange(len(y)), y)
+            fig.add_trace(go.Scatter(x=times[-12:], y=slope * np.arange(len(y)) + intercept, 
+                                     line=dict(color='orange', dash='dash'), name='Trend 1h'))
 
+    fig.update_layout(title=f"{coin} ({timespan})", template="plotly_white")
+    
     # Info Box
     box = html.Div(style={'textAlign': 'center'}, children=[
         html.H2(f"{coin}"),
-        html.H1(f"{format_price(curr_p)} EUR", style={'color': '#28a745'})
+        html.H1(f"{format_price(curr_p)} EUR", style={'color': '#28a745', 'fontSize': '2.5em'})
     ])
 
-    # Tabell (Förenklad för stabilitet)
-    rows = [html.Div(f"{k}: {format_price(data.get(k.split(' ')[0]+'/EUR'))} EUR", style={'padding': '5px'}) for k in list(CRYPTO_PAIRS.keys())[:10]]
-    table = html.Div(rows, style={'backgroundColor': 'white', 'padding': '10px'})
+    # Tabell-lista
+    rows = []
+    for label, p_code in list(CRYPTO_PAIRS.items()):
+        sym = label.split(' ')[0]
+        p = data.get(f'{sym}/EUR', 0)
+        if p > 0:
+            rows.append(html.Div(f"{label}: {format_price(p)} EUR", 
+                                 style={'padding': '8px', 'borderBottom': '1px solid #eee'}))
 
-    return box, table, fig
+    return box, html.Div(rows, style={'backgroundColor': 'white', 'borderRadius': '10px', 'padding': '10px'}), fig
 
 if __name__ == '__main__':
     app.run_server(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))

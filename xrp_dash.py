@@ -13,7 +13,7 @@ from scipy.stats import linregress
 import numpy as np
 from datetime import datetime, timezone, timedelta
 
-# --- Konstanter, Logging och API Konfiguration ---
+# --- Konstanter, Logging och API Konfiguration ----
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

@@ -368,7 +368,8 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
             return []
         result_key = next(iter(ohlc_data['result'])) 
         data_list = ohlc_data['result'][result_key]
-        # UPPDATERING: Hämta även Open, High, Low för Candlesticks
+        
+        # Spara Open, High, Low, Close för Candlesticks
         return [{
             'time': int(row[0]),
             'price': float(row[4]), # Fortfarande 'price' (Close) för bakåtkompatibilitet
@@ -549,10 +550,10 @@ def background_data_fetch(redis_instance):
                     if ohlc_1day_data:
                          redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
                          
-                    # Hämta 1min data (Snabba uppdateringar för grafen - 1h historik)
-                    ohlc_1min_data = fetch_ohlc_data_from_kraken(ticker, 1, 3600)
-                    if ohlc_1min_data:
-                        redis_instance.set(f'OHLC_CACHED_1MIN_{ticker}', json.dumps(ohlc_1min_data), ex=300)
+                    # Hämta 5min data för Live-vyn (hämtar 4 timmar bakåt för att ha marginal)
+                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 5, 3600 * 4)
+                    if ohlc_live_view:
+                        redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
                 
                 else:
                     cached_5min = redis_instance.get(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}')
@@ -994,7 +995,7 @@ def update_fast_components(n, coin_symbol, currency, timeframe):
     graph_hist_data = []
     
     if timeframe == '1h_live':
-        raw_json = r.get(f'OHLC_CACHED_1MIN_{selected_ticker}') if r else None
+        raw_json = r.get(f'OHLC_LIVE_VIEW_{selected_ticker}') if r else None
         graph_hist_data = json.loads(raw_json) if raw_json else []
     elif timeframe == '1w':
         raw_json = r.get(f'OHLC_1WEEK_{selected_ticker}') if r else None
@@ -1018,24 +1019,30 @@ def update_fast_components(n, coin_symbol, currency, timeframe):
         trade_value, individual_trends = calculate_trade_value(hist_5min_curr, current_price_eur, hist_1day_curr)
 
     if graph_hist_data and current_price_eur is not None:
-        live_timestamp = time.time()
-        if graph_hist_data and live_timestamp <= graph_hist_data[-1]['time']:
-             live_timestamp = graph_hist_data[-1]['time'] + 1
-
-        # UPPDATERING: Skapa en fullständig datapunkt för den levande "ljusstaken"
         last_entry = graph_hist_data[-1]
-        # Använd föregående stängning som Open för den nuvarande minuten, eller nuvarande pris om ingen historik
-        sim_open = last_entry.get('close', last_entry.get('price', current_price_eur))
+        last_time = last_entry['time']
         
-        current_graph_data = graph_hist_data + [{
-            'time': live_timestamp,
-            'price': current_price_eur,
-            'open': sim_open,
-            'close': current_price_eur,
-            'high': max(sim_open, current_price_eur),
-            'low': min(sim_open, current_price_eur)
-        }]
-        prices_eur_graph = [item['price'] for item in current_graph_data]
+        # 5 minuter = 300 sekunder.
+        current_time = int(time.time())
+        current_graph_data = graph_hist_data.copy()
+        
+        if current_time < (last_time + 300):
+            # UPPDATERA SISTA CANDLEN (Vi är inne i den just nu)
+            current_graph_data[-1]['close'] = current_price_eur
+            current_graph_data[-1]['high'] = max(last_entry.get('high', -999), current_price_eur)
+            current_graph_data[-1]['low'] = min(last_entry.get('low', 9999999), current_price_eur)
+        else:
+            # SKAPA NY CANDLE
+            next_block_time = last_time + 300
+            current_graph_data.append({
+                'time': next_block_time,
+                'open': current_price_eur,
+                'close': current_price_eur,
+                'high': current_price_eur,
+                'low': current_price_eur
+            })
+
+        prices_eur_graph = [item['price'] if 'price' in item else item['close'] for item in current_graph_data]
         
         chart_data_store = {
             'historical_data': current_graph_data, 
@@ -1203,12 +1210,11 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     
     figure = go.Figure()
     
-    # Hämta OHLC arrayer och konvertera valuta
-    prices_eur = [item['price'] for item in hist_data]
-    # Hantera fall där 'open'/'high'/'low' kanske inte finns i gamla cache-data
-    opens_eur = [item.get('open', item['price']) for item in hist_data]
-    highs_eur = [item.get('high', item['price']) for item in hist_data]
-    lows_eur = [item.get('low', item['price']) for item in hist_data]
+    # Hämta OHLC arrayer och hantera fallback för 'price' nyckeln
+    prices_eur = [item.get('close', item.get('price')) for item in hist_data]
+    opens_eur = [item.get('open', item.get('price')) for item in hist_data]
+    highs_eur = [item.get('high', item.get('price')) for item in hist_data]
+    lows_eur = [item.get('low', item.get('price')) for item in hist_data]
     
     def convert_currency(val_list):
         if currency == 'SEK' or currency == 'USD': return [p * base_price_eur for p in val_list]
@@ -1220,30 +1226,53 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     opens = convert_currency(opens_eur)
     highs = convert_currency(highs_eur)
     lows = convert_currency(lows_eur)
+    
+    # Beräkna aktuellt pris i vald valuta för linjen/punkten
+    current_price_converted = prices[-1] if prices else 0
 
     if timeframe == '1h_live':
-        times = [time.strftime('%H:%M:%S', time.gmtime(item['time'] + 3600)) for item in hist_data]
-        # UPPDATERING: Använd Candlesticks för 1h_live
+        times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
+        
+        # 1. RITA CANDLESTICKS (5 min)
         figure.add_trace(go.Candlestick(
             x=times, open=opens, high=highs, low=lows, close=prices,
-            name='Kurs'
+            name='Kurs (5m)',
+            increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
         ))
-        figure.update_layout(xaxis_rangeslider_visible=False) # Dölj range slider
+        
+        # 2. LÄGG TILL LIVE-MARKÖR (Punkt på sista candle)
+        if times:
+            figure.add_trace(go.Scatter(
+                x=[times[-1]], y=[current_price_converted],
+                mode='markers',
+                name='Live Pris',
+                marker=dict(color='blue', size=10, symbol='circle', line=dict(color='white', width=2))
+            ))
+
+        # 3. HORISONTELL PRISLINJE
+        figure.add_hline(y=current_price_converted, line_dash="dot", line_color="blue", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
+
+        figure.update_layout(xaxis_rangeslider_visible=False) 
+
     else:
+        # Standard linjegraf för övriga vyer
         times = [time.strftime('%Y-%m-%d %H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
         figure.add_trace(go.Scatter(x=times, y=prices, mode='lines', name=f'Kurs', line=dict(color='#0056b3', width=2)))
 
     time_label = "1 Dag (5m)"
-    if timeframe == '1h_live': time_label = "1 Timme (Live)"
+    if timeframe == '1h_live': time_label = "1 Timme (5m Live)"
     elif timeframe == '1w': time_label = "1 Vecka (15m)"
     elif timeframe == '1m': time_label = "1 Månad (60m)"
 
+    # Period Hög/Låg linjer
     if timeframe in ['1d', '1h_live']:
         high_val, low_val = max(highs) if highs else None, min(lows) if lows else None
-        if high_val: figure.add_hline(y=high_val, line_dash="dash", line_color="green", annotation_text="Period Hög")
-        if low_val: figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="Period Låg", annotation_position="bottom left")
+        if high_val and high_val != current_price_converted: 
+            figure.add_hline(y=high_val, line_dash="dash", line_color="green", annotation_text="Hög", opacity=0.3)
+        if low_val and low_val != current_price_converted: 
+            figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="Låg", annotation_position="bottom left", opacity=0.3)
 
-    # UPPDATERING: Blå punkt för 1d, 1w, 1m (sista värdet)
+    # Blå punkt för historikvyerna (ej live-vyn då den har specialmarkör ovan)
     if timeframe in ['1d', '1w', '1m'] and times and prices:
         figure.add_trace(go.Scatter(
             x=[times[-1]], y=[prices[-1]],
@@ -1252,6 +1281,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
             marker=dict(color='blue', size=8)
         ))
 
+    # Trendlinjer (endast för 1d som tidigare)
     if timeframe == '1d':
         for key in selected_trends:
             config = TREND_WINDOWS.get(key)
@@ -1268,19 +1298,13 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
                 
                 figure.add_trace(go.Scatter(x=times[start_idx:], y=trend_y, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash')))
 
-    elif timeframe in ['1w', '1m']:
-        if len(hist_data) > 2:
-            slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
-            trend_y_eur = slope * np.arange(len(hist_data)) + intercept
-            
-            if currency == 'SEK' or currency == 'USD': trend_y = trend_y_eur * base_price_eur
-            elif currency == 'EUR': trend_y = trend_y_eur
-            elif base_price_eur: trend_y = trend_y_eur / base_price_eur
-            else: trend_y = trend_y_eur
-            
-            figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (Period)', line=dict(color='#FFD700', width=3, dash='dot')))
-
-    figure.update_layout(title=f"Prisutveckling: {coin_label} ({time_label})", template="plotly_white", height=500, hovermode="x unified")
+    figure.update_layout(
+        title=f"Prisutveckling: {coin_label} ({time_label})", 
+        template="plotly_white", 
+        height=500, 
+        hovermode="x unified",
+        margin=dict(r=50) 
+    )
     return figure
 
 @app.callback(

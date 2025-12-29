@@ -1207,13 +1207,14 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         if high_val: figure.add_hline(y=high_val, line_dash="dash", line_color="green", annotation_text="Period Hög")
         if low_val: figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="Period Låg", annotation_position="bottom left")
 
-    # Live-prick (Neongrön)
-    if timeframe == '1h_live' and times and prices:
+    # Live/Status-prick (Neongrön för live, blå för övriga)
+    if times and prices:
+        point_color = '#39FF14' if timeframe == '1h_live' else 'blue'
         figure.add_trace(go.Scatter(
             x=[times[-1]], y=[prices[-1]],
             mode='markers',
-            name='Live',
-            marker=dict(color='#39FF14', size=12, line=dict(color='black', width=1))
+            name='Nuvarande',
+            marker=dict(color=point_color, size=12, line=dict(color='black', width=1))
         ))
 
     if timeframe == '1d':

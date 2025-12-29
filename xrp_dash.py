@@ -13,7 +13,7 @@ from scipy.stats import linregress
 import numpy as np
 from datetime import datetime, timezone, timedelta
 
-# --- Konstanter, Logging och API Konfiguration ----
+# --- Konstanter, Logging och API Konfiguration ---
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -72,7 +72,7 @@ BASE_CURRENCIES = ['EUR', 'SEK', 'USD'] + [s for s in COINS_SYMBOLS]
 SYMBOL_TO_LABEL = {label.split(' ')[0]: label for label in COINS_LABELS}
 
 # --- UPPDATERINGSINTERVALL ---
-UPDATE_INTERVAL_FAST = 10   # Grafen & Prisbox (10s)
+UPDATE_INTERVAL_FAST = 10   # Standardvärde för snabb uppdatering (ändras dynamiskt)
 UPDATE_INTERVAL_SLOW = 120  # Tabellen (2min)
 OHLC_FETCH_INTERVAL_SECONDS = 120
 
@@ -640,10 +640,49 @@ if r:
     threading.Thread(target=background_data_fetch, args=(r,), daemon=True).start()
     threading.Thread(target=background_summary_sender, args=(r,), daemon=True).start()
 
-# --- Dash App ---
+# --- Helpers för Layout ---
 
-app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
-server = app.server 
+def create_summary_row(symbol, label, price, percent_data, trade_value, currency, is_selected, eur_to_sek):
+    row_style = {'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '5px 0', 'borderBottom': '1px solid #eee', 'fontSize': '0.85em', 'cursor': 'pointer', 'backgroundColor': '#fff'}
+    if is_selected:
+        row_style['backgroundColor'] = '#e6f7ff'
+        row_style['border'] = '1px solid #0056b3'
+    
+    change_24h = percent_data.get('24h')
+    price_str = format_price_display(price)
+    
+    change_str = ""
+    change_color = '#495057'
+    if change_24h is not None:
+        if change_24h >= 0.01: 
+            change_color = '#28a745'
+            change_str = f" (+{change_24h:.2f}%)"
+        elif change_24h <= -0.01: 
+            change_color = '#dc3545'
+            change_str = f" ({change_24h:.2f}%)"
+        else:
+            change_str = f" ({change_24h:.2f}%)"
+
+    price_div = html.Div([
+        html.Span(price_str, style={'color': '#495057'}),
+        html.Span(change_str, style={'color': change_color, 'fontSize': '0.9em', 'fontWeight': 'normal'})
+    ], style={'flex': '0 0 140px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'})
+    
+    cols = [
+        html.Div(html.Span(f"{CRYPTO_EMOJIS.get(symbol, '')} {label}", style={'fontWeight': 'bold', 'color': '#0056b3' if is_selected else '#495057'}), style={'flex': '0 0 160px', 'paddingLeft': '5px'}),
+        price_div, 
+        html.Div(format_change(percent_data.get('30m')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('1h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('3h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('6h')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('12h')), style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), 
+        html.Div(format_change(percent_data.get('7d')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_change(percent_data.get('30d')), style={'flex': '1', 'textAlign': 'right'}),
+        html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 80px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}),
+    ]
+
+    return html.Div(cols, id={'type': 'summary-card', 'index': symbol}, style=row_style)
 
 def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None): 
     if individual_trends is None: individual_trends = {}
@@ -784,6 +823,11 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         ])
 
 
+# --- Dash App ---
+
+app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
+server = app.server 
+
 app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
     html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
         html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
@@ -866,6 +910,8 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
     dcc.Interval(id='interval-slow', interval=UPDATE_INTERVAL_SLOW*1000, n_intervals=0)
 ])
 
+# --- Callbacks ---
+
 @app.callback(
     Output('table-sort-store', 'data'),
     Input({'type': 'sort-header', 'index': ALL}, 'n_clicks'),
@@ -876,15 +922,23 @@ def update_table_sort_store(n_clicks, current_sort):
     ctx_triggered = ctx.triggered_id
     if not ctx_triggered or not any(n_clicks):
         return dash.no_update
-    
     clicked_key = ctx_triggered['index']
-    
     if clicked_key == current_sort['key']:
         return {'key': clicked_key, 'asc': not current_sort['asc']}
-    
     return {'key': clicked_key, 'asc': False}
 
-# CALLBACK 1: SNABB UPPDATERING (Graf, Top Box, Last Updated)
+# CALLBACK: Styr hastigheten på graf-uppdateringen
+@app.callback(
+    Output('interval-fast', 'interval'),
+    Input('graph-timeframe', 'value')
+)
+def update_interval_speed(timeframe):
+    if timeframe == '1h_live':
+        return 10 * 1000 # 10 sekunder
+    else:
+        return 120 * 1000 # 2 minuter
+
+# CALLBACK 1: GRAF och TOP-BOX (Drivs av interval-fast)
 @app.callback(
     Output('current-price-summary-box-container', 'children'), 
     Output('last-updated', 'children'),
@@ -984,7 +1038,7 @@ def update_fast_components(n, coin_symbol, currency, timeframe):
     return summary_box, updated_text, chart_data_store, currency
 
 
-# CALLBACK 2: LÅNGSAM UPPDATERING (Tabellen)
+# CALLBACK 2: TABELLEN (Drivs av interval-slow, 2 minuter)
 @app.callback(
     Output('crypto-summary', 'children'),
     [Input('interval-slow', 'n_intervals'),
@@ -1153,13 +1207,13 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         if high_val: figure.add_hline(y=high_val, line_dash="dash", line_color="green", annotation_text="Period Hög")
         if low_val: figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="Period Låg", annotation_position="bottom left")
 
-    # Lägg till en pulsande punkt för sista värdet i Live-vyn
+    # Live-prick (Neongrön)
     if timeframe == '1h_live' and times and prices:
         figure.add_trace(go.Scatter(
             x=[times[-1]], y=[prices[-1]],
             mode='markers',
             name='Live',
-            marker=dict(color='orange', size=12, line=dict(color='white', width=2))
+            marker=dict(color='#39FF14', size=12, line=dict(color='black', width=1))
         ))
 
     if timeframe == '1d':

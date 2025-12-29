@@ -879,7 +879,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                      dcc.RadioItems(
                         id='graph-timeframe',
                         options=[
-                            {'label': ' 1 Timme (Live)', 'value': '1h_live'},
+                            {'label': ' 4 Timmar (Live)', 'value': '1h_live'},
                             {'label': ' 1 Dag (5m)', 'value': '1d'},
                             {'label': ' 1 Vecka (15m)', 'value': '1w'},
                             {'label': ' 1 Månad (60m)', 'value': '1m'}
@@ -1260,7 +1260,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         figure.add_trace(go.Scatter(x=times, y=prices, mode='lines', name=f'Kurs', line=dict(color='#0056b3', width=2)))
 
     time_label = "1 Dag (5m)"
-    if timeframe == '1h_live': time_label = "1 Timme (5m Live)"
+    if timeframe == '1h_live': time_label = "4 Timmar (5m Live)"
     elif timeframe == '1w': time_label = "1 Vecka (15m)"
     elif timeframe == '1m': time_label = "1 Månad (60m)"
 

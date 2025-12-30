@@ -550,8 +550,8 @@ def background_data_fetch(redis_instance):
                     if ohlc_1day_data:
                          redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
                          
-                    # Hämta 5min data för Live-vyn (hämtar 4 timmar bakåt för att ha marginal)
-                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 5, 3600 * 4)
+                    # Hämta 15min data för Live-vyn (hämtar 4 timmar bakåt för att ha marginal)
+                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 4)
                     if ohlc_live_view:
                         redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
                 
@@ -879,7 +879,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                      dcc.RadioItems(
                         id='graph-timeframe',
                         options=[
-                            {'label': ' 4 Timmar (Live)', 'value': '1h_live'},
+                            {'label': ' 1 Timme (Live)', 'value': '1h_live'},
                             {'label': ' 1 Dag (5m)', 'value': '1d'},
                             {'label': ' 1 Vecka (15m)', 'value': '1w'},
                             {'label': ' 1 Månad (60m)', 'value': '1m'}
@@ -1022,18 +1022,18 @@ def update_fast_components(n, coin_symbol, currency, timeframe):
         last_entry = graph_hist_data[-1]
         last_time = last_entry['time']
         
-        # 5 minuter = 300 sekunder.
+        # 15 minuter = 900 sekunder.
         current_time = int(time.time())
         current_graph_data = graph_hist_data.copy()
         
-        if current_time < (last_time + 300):
+        if current_time < (last_time + 900):
             # UPPDATERA SISTA CANDLEN (Vi är inne i den just nu)
             current_graph_data[-1]['close'] = current_price_eur
             current_graph_data[-1]['high'] = max(last_entry.get('high', -999), current_price_eur)
             current_graph_data[-1]['low'] = min(last_entry.get('low', 9999999), current_price_eur)
         else:
             # SKAPA NY CANDLE
-            next_block_time = last_time + 300
+            next_block_time = last_time + 900
             current_graph_data.append({
                 'time': next_block_time,
                 'open': current_price_eur,
@@ -1233,10 +1233,10 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     if timeframe == '1h_live':
         times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
         
-        # 1. RITA CANDLESTICKS (5 min)
+        # 1. RITA CANDLESTICKS (15 min)
         figure.add_trace(go.Candlestick(
             x=times, open=opens, high=highs, low=lows, close=prices,
-            name='Kurs (5m)',
+            name='Kurs (15m)',
             increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
         ))
         
@@ -1260,7 +1260,7 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         figure.add_trace(go.Scatter(x=times, y=prices, mode='lines', name=f'Kurs', line=dict(color='#0056b3', width=2)))
 
     time_label = "1 Dag (5m)"
-    if timeframe == '1h_live': time_label = "4 Timmar (5m Live)"
+    if timeframe == '1h_live': time_label = "1 Timme (15m Live)"
     elif timeframe == '1w': time_label = "1 Vecka (15m)"
     elif timeframe == '1m': time_label = "1 Månad (60m)"
 

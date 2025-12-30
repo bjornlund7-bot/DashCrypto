@@ -668,8 +668,7 @@ def create_summary_row(symbol, label, price, percent_data, trade_value, currency
             change_str = f" ({change_24h:.2f}%)"
 
     # Logo istället för emoji
-    logo_img = html.Img(src=get_logo_url(symbol), style={'width': '20px', 'height': '20px', 'marginRight': '8px', 'verticalAlign': 'middle'}, 
-                        onError="this.onerror=null;this.src='https://via.placeholder.com/20?text=?';")
+    logo_img = html.Img(src=get_logo_url(symbol), style={'width': '20px', 'height': '20px', 'marginRight': '8px', 'verticalAlign': 'middle'})
 
     price_div = html.Div([
         html.Span(price_str, style={'color': '#495057'}),
@@ -697,8 +696,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         
     price_text = f"{format_price_display(price)} {currency}"
     # Logo istället för emoji
-    logo_img = html.Img(src=get_logo_url(symbol), style={'width': '35px', 'height': '35px', 'marginRight': '10px', 'verticalAlign': 'middle'}, 
-                    onError="this.onerror=null;this.src='https://via.placeholder.com/35?text=?';")
+    logo_img = html.Img(src=get_logo_url(symbol), style={'width': '35px', 'height': '35px', 'marginRight': '10px', 'verticalAlign': 'middle'})
     
     change_24h = percent_data.get('24h') 
     price_color = '#28a745' if change_24h and change_24h > 0 else '#dc3545' if change_24h and change_24h < 0 else '#495057'

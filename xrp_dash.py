@@ -27,6 +27,9 @@ KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
+# URL för logotyper (Open Source Repository)
+LOGO_BASE_URL = "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/"
+
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
     'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR',
@@ -524,7 +527,7 @@ def background_data_fetch(redis_instance):
                     if ohlc_1day_data:
                          redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
                          
-                    # HÄR ÄR ÄNDRINGEN: Hämtar 12 timmar istället för 4 timmar
+                    # HÄMTNING AV 12 TIMMAR DATA FÖR GRAFEN (Ändrat från 3600*4 till 3600*12)
                     ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 12)
                     if ohlc_live_view:
                         redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
@@ -703,7 +706,7 @@ app.layout = html.Div([
                         dcc.RadioItems(
                             id='timeframe-selector',
                             options=[
-                                # HÄR ÄR ÄNDRINGEN I LAYOUT
+                                # TEXTÄNDRING: FRÅN 4 TILL 12 TIMMAR
                                 {'label': '12 Timmar (Live)', 'value': 'live'},
                                 {'label': '1 Vecka', 'value': '1w'},
                                 {'label': '1 Månad', 'value': '1m'}
@@ -855,12 +858,12 @@ def update_graph(n, selected_coin, currency, timeframe):
     ticker = CRYPTO_PAIRS[coin_label]
     
     hist_data = []
-    # Ändring: 12 Timmar i label
-    time_label = "12 Timmar"
+    time_label = "Okänd"
     
     if timeframe == 'live':
         cached_live = r.get(f'OHLC_LIVE_VIEW_{ticker}') if r else None
         hist_data = json.loads(cached_live) if cached_live else []
+        # TEXTÄNDRING: FRÅN 4 TILL 12 TIMMAR
         time_label = "12 Timmar (Live)"
     elif timeframe == '1w':
         cached_1w = r.get(f'OHLC_1WEEK_{ticker}') if r else None
@@ -892,11 +895,12 @@ def update_graph(n, selected_coin, currency, timeframe):
     figure.add_trace(go.Scatter(
         x=times, y=prices,
         mode='lines',
-        line=dict(color='#0056b3', width=2),
+        line=dict(color='#0056b3', width=3),
         name='Pris'
     ))
 
     if timeframe in ['1w', '1m']:
+         # Trendlinje för vecka/månad
          slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
          if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
@@ -907,7 +911,8 @@ def update_graph(n, selected_coin, currency, timeframe):
         title=f"Prisutveckling: {coin_label} ({time_label})", 
         template="plotly_white", 
         height=500, 
-        hovermode="x unified"
+        hovermode="x unified",
+        margin=dict(r=50) 
     )
     return figure
 

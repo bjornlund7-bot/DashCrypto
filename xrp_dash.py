@@ -1015,10 +1015,10 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
             if raw_json:
                 graph_hist_data = json.loads(raw_json)
             else:
-                 graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, 15, 3600 * 4)
+                 graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, 15, 3600 * 12)
         else:
              # För 30m och 60m hämtar vi direkt (4h fönster)
-             graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, candle_interval, 3600 * 4)
+             graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, candle_interval, 3600 * 12)
 
     elif timeframe == '1w':
         raw_json = r.get(f'OHLC_1WEEK_{selected_ticker}') if r else None

@@ -27,9 +27,6 @@ KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# URL för logotyper (Open Source Repository)
-LOGO_BASE_URL = "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/"
-
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
     'SOL (Solana)': 'SOL/EUR', 'GRASS (Grass)': 'GRASS/EUR', 'ADA (Cardano)': 'ADA/EUR',
@@ -125,11 +122,6 @@ DEFAULT_DATA = {
 }
 
 # --- Hjälpfunktioner ---
-
-def get_logo_url(symbol):
-    """Genererar URL för officiell logotyp."""
-    s = symbol.lower()
-    return f"{LOGO_BASE_URL}{s}.png"
 
 def format_price_display(p):
     if p is None: return "N/A"
@@ -349,8 +341,6 @@ def fetch_crypto_data():
         logger.error(f"❌ Error fetching/processing ticker data: {e}")
         return DEFAULT_DATA 
 
-# --- Del 2 Start ---
-
 def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
     time_ago = int(time.time()) - periods_ago_seconds 
     params = { 'pair': kraken_ticker, 'interval': interval, 'since': time_ago }
@@ -362,16 +352,7 @@ def fetch_ohlc_data_from_kraken(kraken_ticker, interval, periods_ago_seconds):
             return []
         result_key = next(iter(ohlc_data['result'])) 
         data_list = ohlc_data['result'][result_key]
-        
-        # Spara Open, High, Low, Close för Candlesticks
-        return [{
-            'time': int(row[0]),
-            'price': float(row[4]), # Fortfarande 'price' (Close) för bakåtkompatibilitet
-            'open': float(row[1]),
-            'high': float(row[2]),
-            'low': float(row[3]),
-            'close': float(row[4])
-        } for row in data_list]
+        return [{'time': int(row[0]), 'price': float(row[4])} for row in data_list]
     except Exception as e:
         logger.error(f"Error fetching OHLC data for {kraken_ticker}: {e}")
         return []
@@ -503,7 +484,6 @@ def background_data_fetch(redis_instance):
     while True:
         cycle_start_time = time.time()
         try:
-            # 1. Hämta Priser (Tickers) - Varje cykel (10 sekunder)
             new_data = fetch_crypto_data()
             if not new_data or new_data == DEFAULT_DATA:
                 time.sleep(UPDATE_INTERVAL_FAST)
@@ -544,8 +524,7 @@ def background_data_fetch(redis_instance):
                     if ohlc_1day_data:
                          redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
                          
-                    # Hämta 15min data som grund för Live-vyn 
-                    # Vi hämtar 12 timmars historik nu
+                    # HÄR ÄR ÄNDRINGEN: Hämtar 12 timmar istället för 4 timmar
                     ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 12)
                     if ohlc_live_view:
                         redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
@@ -668,16 +647,13 @@ def create_summary_row(symbol, label, price, percent_data, trade_value, currency
         else:
             change_str = f" ({change_24h:.2f}%)"
 
-    # Logo istället för emoji
-    logo_img = html.Img(src=get_logo_url(symbol), style={'width': '20px', 'height': '20px', 'marginRight': '8px', 'verticalAlign': 'middle'})
-
     price_div = html.Div([
         html.Span(price_str, style={'color': '#495057'}),
         html.Span(change_str, style={'color': change_color, 'fontSize': '0.9em', 'fontWeight': 'normal'})
     ], style={'flex': '0 0 140px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'})
 
     return html.Div([
-        html.Div([logo_img, html.Span(symbol, style={'fontWeight': 'bold'})], style={'flex': '0 0 90px', 'display': 'flex', 'alignItems': 'center'}),
+        html.Div(symbol, style={'flex': '0 0 60px', 'fontWeight': 'bold'}),
         price_div,
         html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 50px', 'textAlign': 'right', 'paddingRight': '10px'})
     ], style=row_style, id={'type': 'summary-card', 'index': symbol})
@@ -690,21 +666,16 @@ app.layout = html.Div([
     dcc.Interval(id='fast-update', interval=UPDATE_INTERVAL_FAST * 1000, n_intervals=0),
     dcc.Store(id='initial-coin-symbol-store', data=DEFAULT_COIN_SYMBOL),
     
-    # Header
     html.Div([
-        html.Div([
-            html.Img(id='header-logo', src=get_logo_url(DEFAULT_COIN_SYMBOL), style={'width': '40px', 'height': '40px', 'marginRight': '15px'}),
-            html.H2(id='header-title', children="Crypto Dashboard", style={'margin': '0', 'color': '#0056b3', 'fontSize': '1.5em'})
-        ], style={'display': 'flex', 'alignItems': 'center'})
+        html.H2(id='header-title', children="Crypto Dashboard", style={'margin': '0', 'color': '#0056b3', 'fontSize': '1.5em'})
     ], style={'padding': '15px 20px', 'backgroundColor': '#fff', 'borderBottom': '2px solid #0056b3', 'marginBottom': '15px', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'}),
 
     html.Div([
-        # Vänster Kolumn: Marknadsöversikt
         html.Div([
             html.Div([
                 html.H4("Marknadsöversikt", style={'margin': '0 0 15px 0', 'color': '#333', 'borderBottom': '1px solid #ddd', 'paddingBottom': '5px'}),
                 html.Div([
-                    html.Div("VALUTA", style={'flex': '0 0 90px', 'fontSize': '0.75em', 'color': '#666', 'fontWeight': 'bold'}),
+                    html.Div("VALUTA", style={'flex': '0 0 60px', 'fontSize': '0.75em', 'color': '#666', 'fontWeight': 'bold'}),
                     html.Div("PRIS", style={'flex': '0 0 140px', 'fontSize': '0.75em', 'color': '#666', 'fontWeight': 'bold', 'textAlign': 'right', 'paddingRight': '5px'}),
                     html.Div("H.V.", style={'flex': '0 0 50px', 'fontSize': '0.75em', 'color': '#666', 'fontWeight': 'bold', 'textAlign': 'right', 'paddingRight': '10px'})
                 ], style={'display': 'flex', 'justifyContent': 'space-between', 'padding': '0 0 5px 0', 'borderBottom': '1px solid #eee'}),
@@ -712,9 +683,7 @@ app.layout = html.Div([
             ], style={'backgroundColor': '#fff', 'padding': '15px', 'borderRadius': '8px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.05)'})
         ], className='four columns', style={'width': '33%', 'marginRight': '1%'}),
 
-        # Höger Kolumn: Grafer och Detaljer
         html.Div([
-            # Rad 1: Kontroller
             html.Div([
                 html.Div([
                     html.Label("Välj Valuta:", style={'fontWeight': 'bold', 'fontSize': '0.9em'}),
@@ -726,16 +695,15 @@ app.layout = html.Div([
                 ], style={'width': '48%', 'display': 'inline-block'})
             ], style={'backgroundColor': '#fff', 'padding': '15px', 'borderRadius': '8px', 'marginBottom': '15px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.05)'}),
 
-            # Rad 2: Pris & Statistik
             html.Div(id='price-stats-container', style={'marginBottom': '15px'}),
 
-            # Rad 3: Huvudgraf
             html.Div([
                 html.Div([
                     html.Div([
                         dcc.RadioItems(
                             id='timeframe-selector',
                             options=[
+                                # HÄR ÄR ÄNDRINGEN I LAYOUT
                                 {'label': '12 Timmar (Live)', 'value': 'live'},
                                 {'label': '1 Vecka', 'value': '1w'},
                                 {'label': '1 Månad', 'value': '1m'}
@@ -749,18 +717,14 @@ app.layout = html.Div([
                 ], style={'backgroundColor': '#fff', 'padding': '15px', 'borderRadius': '8px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.05)'})
             ], style={'marginBottom': '15px'}),
             
-            # Rad 4: Handelsvärde (H.V.) Detaljer
             html.Div(id='trade-value-details-container')
 
         ], className='eight columns', style={'width': '65%'})
     ], style={'display': 'flex', 'padding': '0 20px'})
 ], style={'backgroundColor': '#f4f7f9', 'minHeight': '100vh', 'fontFamily': '"Segoe UI", Roboto, Helvetica, Arial, sans-serif'})
 
-# --- Callbacks ---
-
 @app.callback(
     [Output('market-summary-list', 'children'),
-     Output('header-logo', 'src'),
      Output('header-title', 'children'),
      Output('price-stats-container', 'children'),
      Output('trade-value-details-container', 'children')],
@@ -776,7 +740,6 @@ def update_fast_elements(n, selected_coin, currency):
     eur_to_sek = rates.get('SEK', 11.0)
     eur_to_usd = rates.get('USD', 1.05)
 
-    # 1. Bygg marknadsöversikten
     summary_rows = []
     for label in COINS_LABELS:
         coin_symbol = label.split(' ')[0]
@@ -784,7 +747,6 @@ def update_fast_elements(n, selected_coin, currency):
         price_eur = data.get(f'{coin_symbol}/EUR')
         percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol, {})
         
-        # Beräkna Trade Value för raden
         ohlc_5min = json.loads(r.get(f'OHLC_CACHED_5MIN_{ticker}')) if r and r.get(f'OHLC_CACHED_5MIN_{ticker}') else []
         ohlc_1day = json.loads(r.get(f'OHLC_1DAY_{ticker}')) if r and r.get(f'OHLC_1DAY_{ticker}') else []
         
@@ -798,14 +760,9 @@ def update_fast_elements(n, selected_coin, currency):
 
         summary_rows.append(create_summary_row(coin_symbol, label, price_eur, percent_data, row_trade_value, 'EUR', coin_symbol == selected_coin, eur_to_sek))
 
-    # 2. Uppdatera Header Info
-    header_logo = get_logo_url(selected_coin)
     header_title = f"{SYMBOL_TO_LABEL.get(selected_coin, selected_coin)} Dashboard"
 
-    # 3. Uppdatera Pris & Statistik (Topp-boxarna)
     price_eur = data.get(f'{selected_coin}/EUR')
-    
-    # Konvertera pris till vald basvaluta
     price_in_base = price_eur
     base_symbol = currency
     if currency == 'SEK': price_in_base = price_eur * eur_to_sek
@@ -815,7 +772,6 @@ def update_fast_elements(n, selected_coin, currency):
         if other_coin_price_eur and other_coin_price_eur > 0:
             price_in_base = price_eur / other_coin_price_eur
     
-    # 24h Range
     range_data = data.get('ALL_24H_RANGE_OHLC', {}).get(selected_coin, {})
     high_eur = range_data.get('high_eur', price_eur)
     low_eur = range_data.get('low_eur', price_eur)
@@ -828,9 +784,6 @@ def update_fast_elements(n, selected_coin, currency):
             return p_eur / ref if ref else p_eur
         return p_eur
 
-    percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(selected_coin, {})
-    
-    # Beräkna Handelsvärde och trender för detaljboxen
     ticker_selected = CRYPTO_PAIRS[SYMBOL_TO_LABEL.get(selected_coin)]
     ohlc_5min_sel = json.loads(r.get(f'OHLC_CACHED_5MIN_{ticker_selected}')) if r and r.get(f'OHLC_CACHED_5MIN_{ticker_selected}') else []
     ohlc_1day_sel = json.loads(r.get(f'OHLC_1DAY_{ticker_selected}')) if r and r.get(f'OHLC_1DAY_{ticker_selected}') else []
@@ -843,7 +796,6 @@ def update_fast_elements(n, selected_coin, currency):
         h_1day_sel.append({'time': data.get('timestamp'), 'price': price_eur})
         current_tv, individual_trends = calculate_trade_value(h_5min_sel, price_eur, h_1day_sel)
 
-    # UI för Pris-boxar
     stats_ui = html.Div([
         html.Div([
             html.Small(f"PRIS ({base_symbol})", style={'color': '#666', 'fontSize': '0.7em', 'fontWeight': 'bold'}),
@@ -865,10 +817,8 @@ def update_fast_elements(n, selected_coin, currency):
         ], style={'flex': '0 0 180px', 'backgroundColor': '#fff', 'padding': '15px', 'borderRadius': '8px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.05)'})
     ], style={'display': 'flex', 'justifyContent': 'space-between'})
 
-    # UI för Handelsvärde Detaljer
     tv_details_rows = []
     if individual_trends:
-        # Sortera TREND_WINDOWS i den ordning vi vill visa dem
         sorted_keys = ['1h', '3h', '6h', '12h', '18h', '7d', '30d', '6m', '1y']
         for key in sorted_keys:
             trend = individual_trends.get(key)
@@ -877,7 +827,6 @@ def update_fast_elements(n, selected_coin, currency):
                 trend_price = trend['price']
                 color = '#28a745' if val > 0 else '#dc3545'
                 bg_color = '#eafaf1' if val > 0 else '#fdf2f2'
-                
                 tv_details_rows.append(html.Div([
                     html.Div(key.upper(), style={'fontWeight': 'bold', 'fontSize': '0.75em', 'color': '#666'}),
                     html.Div(f"{'+' if val > 0 else ''}{val:.1f}", style={'color': color, 'fontWeight': 'bold', 'fontSize': '1.1em'}),
@@ -889,7 +838,7 @@ def update_fast_elements(n, selected_coin, currency):
         html.Div(tv_details_rows, style={'display': 'flex', 'justifyContent': 'space-between'})
     ], style={'backgroundColor': '#fff', 'padding': '15px', 'borderRadius': '8px', 'boxShadow': '0 2px 8px rgba(0,0,0,0.05)'})
 
-    return summary_rows, header_logo, header_title, stats_ui, tv_ui
+    return summary_rows, header_title, stats_ui, tv_ui
 
 @app.callback(
     Output('price-graph', 'figure'),
@@ -905,8 +854,8 @@ def update_graph(n, selected_coin, currency, timeframe):
     coin_label = SYMBOL_TO_LABEL.get(selected_coin, selected_coin)
     ticker = CRYPTO_PAIRS[coin_label]
     
-    # Hämta historisk data baserat på vald vy
     hist_data = []
+    # Ändring: 12 Timmar i label
     time_label = "12 Timmar"
     
     if timeframe == 'live':
@@ -927,7 +876,6 @@ def update_graph(n, selected_coin, currency, timeframe):
         fig.update_layout(title="Hämtar data...")
         return fig
 
-    # Konverteringsfunktion för grafen
     rates = data.get('EXCHANGE_RATES', {})
     def convert_currency(price_eur_val):
         if currency == 'SEK': return price_eur_val * rates.get('SEK', 11.0)
@@ -940,22 +888,15 @@ def update_graph(n, selected_coin, currency, timeframe):
     times = [datetime.fromtimestamp(item['time']) for item in hist_data]
     prices = [convert_currency(item['price']) for item in hist_data]
 
-    # Skapa grafen
     figure = go.Figure()
-    
-    # Candlestick eller Line? Vi kör Line för renhet men med snygg färg
     figure.add_trace(go.Scatter(
         x=times, y=prices,
         mode='lines',
         line=dict(color='#0056b3', width=2),
-        fill='tozeroy',
-        fillcolor='rgba(0, 86, 179, 0.05)',
         name='Pris'
     ))
 
-    # Trendlinje om vi är i vecka/månad vy
     if timeframe in ['1w', '1m']:
-         # Trendlinje för vecka/månad
          slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
          if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
@@ -966,8 +907,7 @@ def update_graph(n, selected_coin, currency, timeframe):
         title=f"Prisutveckling: {coin_label} ({time_label})", 
         template="plotly_white", 
         height=500, 
-        hovermode="x unified",
-        margin=dict(r=50) 
+        hovermode="x unified"
     )
     return figure
 

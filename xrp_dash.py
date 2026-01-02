@@ -27,8 +27,22 @@ KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# URL för logotyper (Open Source Repository)
-LOGO_BASE_URL = "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/"
+# Ny källa för logotyper (CoinCap assets är ofta mycket pålitliga)
+LOGO_BASE_URL = "https://assets.coincap.io/assets/icons/"
+
+# Manuella överskridningar för "exotiska" coins som inte finns i standard-listan
+LOGO_OVERRIDES = {
+    'GRASS': 'https://cryptologos.cc/logos/grass-grass-logo.png',
+    'WIF': 'https://s2.coinmarketcap.com/static/img/coins/64x64/28752.png',
+    'PEPE': 'https://assets.coincap.io/assets/icons/pepe@2x.png',
+    'PUMP': 'https://s2.coinmarketcap.com/static/img/coins/64x64/29272.png', # Exempel
+    'TRUMP': 'https://s2.coinmarketcap.com/static/img/coins/64x64/31535.png',
+    'DOGE': 'https://assets.coincap.io/assets/icons/doge@2x.png',
+    'SOL': 'https://assets.coincap.io/assets/icons/sol@2x.png',
+    'XRP': 'https://assets.coincap.io/assets/icons/xrp@2x.png',
+    'BTC': 'https://assets.coincap.io/assets/icons/btc@2x.png',
+    'ETH': 'https://assets.coincap.io/assets/icons/eth@2x.png',
+}
 
 CRYPTO_PAIRS = {
     'XRP (Ripple)': 'XRP/EUR', 'BTC (Bitcoin)': 'BTC/EUR', 'ETH (Ethereum)': 'ETH/EUR',
@@ -127,9 +141,12 @@ DEFAULT_DATA = {
 # --- Hjälpfunktioner ---
 
 def get_logo_url(symbol):
-    """Genererar URL för officiell logotyp."""
-    s = symbol.lower()
-    return f"{LOGO_BASE_URL}{s}.png"
+    """Genererar URL för officiell logotyp med fallback."""
+    s_upper = symbol.upper()
+    if s_upper in LOGO_OVERRIDES:
+        return LOGO_OVERRIDES[s_upper]
+    # Standard CoinCap URL (använder lowercase)
+    return f"{LOGO_BASE_URL}{symbol.lower()}@2x.png"
 
 def format_price_display(p):
     if p is None: return "N/A"
@@ -650,7 +667,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
     if individual_trends is None: individual_trends = {}
         
     price_text = f"{format_price_display(price)} {currency}"
-    # Logo istället för emoji (utan onError för att undvika Render-krasch, vi litar på URLen)
+    # Logo istället för emoji (utan onError för att undvika Render-krasch)
     logo_img = html.Img(src=get_logo_url(symbol), style={'width': '35px', 'height': '35px', 'marginRight': '10px', 'verticalAlign': 'middle'})
     
     change_24h = percent_data.get('24h') 
@@ -1133,16 +1150,16 @@ def update_table_slow(n, currency):
         elif currency == 'USD': pb = pe * eur_to_usd if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
-        # Skapa markdown för logga + namn
+        # Skapa HTML för logga + namn
+        # OBS: Vi använder HTML-tagg här för att kunna styra width/height exakt (24px)
         logo_url = get_logo_url(sl)
-        label_markdown = f"![Logo]({logo_url}) **{label}**"
+        label_html = f"<img src='{logo_url}' style='height: 24px; width: 24px; vertical-align: middle; margin-right: 8px;' /> **{label}**"
         
-        # Formatera priset snyggt
         price_formatted = f"{format_price_display(pb)} {currency}" if pb is not None else "N/A"
 
         row = {
-            'label': label_markdown,
-            'symbol': sl, # Gömd, används för klick-logik
+            'label': label_html,
+            'symbol': sl, 
             'price': price_formatted,
             '30m': pd.get('30m'),
             '1h': pd.get('1h'),
@@ -1271,35 +1288,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     return figure
 
 # Uppdaterad Callback för att välja valuta via tabell-klick
-@app.callback(
-    Output('coin-dropdown', 'value'),
-    [Input('crypto-table', 'active_cell'),
-     Input('initial-coin-symbol-store', 'data')],
-    [State('crypto-table', 'data')]
-)
-def update_dropdown_selection(active_cell, initial_coin, table_data):
-    trigger = ctx.triggered_id
-    if not trigger or trigger == 'initial-coin-symbol-store':
-        return initial_coin if initial_coin else dash.no_update
-    
-    if active_cell and table_data:
-        row = active_cell['row']
-        # I en sorterad tabell måste vi titta på den faktiska datan, inte bara index
-        # Dash Table skickar oftast den sorterade datan i 'derived_virtual_data' (State),
-        # men här förenklar vi genom att anta att 'data' är korrekt eller att vi hämtar symbolen.
-        # För bättre robusthet vid sortering bör man använda 'derived_virtual_data' som State istället för 'data'.
-        # Men låt oss kolla om vi kan hämta det enkelt:
-        if row < len(table_data):
-             # Om tabellen är sorterad på klienten, stämmer inte indexet i 'data' (som är ursprungsdatan)
-             # med active_cell['row']. 
-             # Lösning: Använd State('crypto-table', 'derived_virtual_data') om vi hade det.
-             # Då jag inte ändrade signaturen ovan för att inkludera derived_virtual_data i denna edit,
-             # lägger jag till det nu för att det ska fungera korrekt med sortering:
-             pass 
-             
-    return dash.no_update
-
-# Korrigering av callbacken ovan för att stödja sortering:
 @app.callback(
     Output('coin-dropdown', 'value', allow_duplicate=True),
     [Input('crypto-table', 'active_cell')],

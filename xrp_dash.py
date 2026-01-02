@@ -1,5 +1,5 @@
 import dash
-from dash import dcc, html, ctx, ALL
+from dash import dcc, html, dash_table, ctx, ALL
 from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
 import time
@@ -646,56 +646,11 @@ if r:
 
 # --- Helpers för Layout ---
 
-def create_summary_row(symbol, label, price, percent_data, trade_value, currency, is_selected, eur_to_sek):
-    row_style = {'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '5px 0', 'borderBottom': '1px solid #eee', 'fontSize': '0.85em', 'cursor': 'pointer', 'backgroundColor': '#fff'}
-    if is_selected:
-        row_style['backgroundColor'] = '#e6f7ff'
-        row_style['border'] = '1px solid #0056b3'
-    
-    change_24h = percent_data.get('24h')
-    price_str = format_price_display(price)
-    
-    change_str = ""
-    change_color = '#495057'
-    if change_24h is not None:
-        if change_24h >= 0.01: 
-            change_color = '#28a745'
-            change_str = f" (+{change_24h:.2f}%)"
-        elif change_24h <= -0.01: 
-            change_color = '#dc3545'
-            change_str = f" ({change_24h:.2f}%)"
-        else:
-            change_str = f" ({change_24h:.2f}%)"
-
-    # Logo istället för emoji
-    logo_img = html.Img(src=get_logo_url(symbol), style={'width': '20px', 'height': '20px', 'marginRight': '8px', 'verticalAlign': 'middle'})
-
-    price_div = html.Div([
-        html.Span(price_str, style={'color': '#495057'}),
-        html.Span(change_str, style={'color': change_color, 'fontSize': '0.9em', 'fontWeight': 'normal'})
-    ], style={'flex': '0 0 140px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'})
-    
-    cols = [
-        html.Div([logo_img, html.Span(label, style={'fontWeight': 'bold', 'color': '#0056b3' if is_selected else '#495057'})], style={'flex': '0 0 160px', 'paddingLeft': '5px', 'display': 'flex', 'alignItems': 'center'}),
-        price_div, 
-        html.Div(format_change(percent_data.get('30m')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('1h')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('3h')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('6h')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('12h')), style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div(format_change(percent_data.get('24h')), style={'flex': '1', 'textAlign': 'right'}), 
-        html.Div(format_change(percent_data.get('7d')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_change(percent_data.get('30d')), style={'flex': '1', 'textAlign': 'right'}),
-        html.Div(format_trade_value_display(trade_value), style={'flex': '0 0 80px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px'}),
-    ]
-
-    return html.Div(cols, id={'type': 'summary-card', 'index': symbol}, style=row_style)
-
 def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None): 
     if individual_trends is None: individual_trends = {}
         
     price_text = f"{format_price_display(price)} {currency}"
-    # Logo istället för emoji
+    # Logo istället för emoji (utan onError för att undvika Render-krasch, vi litar på URLen)
     logo_img = html.Img(src=get_logo_url(symbol), style={'width': '35px', 'height': '35px', 'marginRight': '10px', 'verticalAlign': 'middle'})
     
     change_24h = percent_data.get('24h') 
@@ -837,6 +792,21 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
 app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/cnWqWbL.css'])
 server = app.server 
 
+# Kolumndefinitioner för DataTable
+TABLE_COLUMNS = [
+    {"name": "Valuta", "id": "label", "presentation": "markdown"}, # Logo + Namn
+    {"name": "Pris", "id": "price", "type": "text"}, # Pris som text för enkel formatering
+    {"name": "30m", "id": "30m", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "1h", "id": "1h", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "3h", "id": "3h", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "6h", "id": "6h", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "12h", "id": "12h", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "24h", "id": "24h", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "7d", "id": "7d", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "30d", "id": "30d", "type": "numeric", "format": {"specifier": "+.2f"}},
+    {"name": "H.V.", "id": "trade_value", "type": "numeric", "format": {"specifier": "+d"}},
+]
+
 app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
     html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
         html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
@@ -859,7 +829,6 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
             dcc.Store(id='chart-data-store'), 
             dcc.Store(id='current-currency-store'),
             dcc.Store(id='initial-coin-symbol-store', data=DEFAULT_COIN_SYMBOL),
-            dcc.Store(id='table-sort-store', data={'key': 's24h', 'asc': False}), 
         ]),
         
         html.Div(style={'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
@@ -891,7 +860,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                      dcc.RadioItems(
                         id='graph-timeframe',
                         options=[
-                            {'label': ' 12 Timmar (Live)', 'value': '4h_live'},
+                            {'label': ' 4 Timmar (Live)', 'value': '4h_live'},
                             {'label': ' 1 Dag (5m)', 'value': '1d'},
                             {'label': ' 1 Vecka (15m)', 'value': '1w'},
                             {'label': ' 1 Månad (60m)', 'value': '1m'}
@@ -907,7 +876,54 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
         
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
              html.H3('📊 Sammanfattning: Handelsvärde & Prisrörelser', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
-             dcc.Loading(id="loading-2", type="dot", children=[html.Div(id='crypto-summary')])
+             dcc.Loading(id="loading-2", type="dot", children=[
+                 dash_table.DataTable(
+                     id='crypto-table',
+                     columns=TABLE_COLUMNS,
+                     data=[], # Fylls av callback
+                     sort_action="native",
+                     sort_mode="single",
+                     style_table={'overflowX': 'auto'},
+                     style_cell={
+                         'textAlign': 'right',
+                         'padding': '10px',
+                         'fontFamily': 'Roboto, Arial, sans-serif',
+                         'fontSize': '0.9em'
+                     },
+                     style_header={
+                         'backgroundColor': '#f0f0f0',
+                         'fontWeight': 'bold',
+                         'borderBottom': '2px solid #0056b3'
+                     },
+                     style_cell_conditional=[
+                         {'if': {'column_id': 'label'}, 'textAlign': 'left'},
+                         {'if': {'column_id': 'price'}, 'fontWeight': 'bold'}
+                     ],
+                     style_data_conditional=[
+                         # Färga procent-kolumner (Grön om > 0, Röd om < 0)
+                         {
+                             'if': {'filter_query': f'{{{col}}} > 0', 'column_id': col},
+                             'color': '#28a745', 'fontWeight': 'bold'
+                         } for col in ['30m', '1h', '3h', '6h', '12h', '24h', '7d', '30d', 'trade_value']
+                     ] + [
+                         {
+                             'if': {'filter_query': f'{{{col}}} < 0', 'column_id': col},
+                             'color': '#dc3545', 'fontWeight': 'bold'
+                         } for col in ['30m', '1h', '3h', '6h', '12h', '24h', '7d', '30d', 'trade_value']
+                     ] + [
+                         # Färga PRIS baserat på 24h utveckling (Kräver att vi har 24h data i raden)
+                         {
+                             'if': {'filter_query': '{24h} > 0', 'column_id': 'price'},
+                             'color': '#28a745'
+                         },
+                         {
+                             'if': {'filter_query': '{24h} < 0', 'column_id': 'price'},
+                             'color': '#dc3545'
+                         }
+                     ],
+                     markdown_options={'html': True} # Tillåt bilder i markdown
+                 )
+             ])
         ]),
         
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
@@ -932,21 +948,6 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
 ])
 
 # --- Callbacks ---
-
-@app.callback(
-    Output('table-sort-store', 'data'),
-    Input({'type': 'sort-header', 'index': ALL}, 'n_clicks'),
-    State('table-sort-store', 'data'),
-    prevent_initial_call=True
-)
-def update_table_sort_store(n_clicks, current_sort):
-    ctx_triggered = ctx.triggered_id
-    if not ctx_triggered or not any(n_clicks):
-        return dash.no_update
-    clicked_key = ctx_triggered['index']
-    if clicked_key == current_sort['key']:
-        return {'key': clicked_key, 'asc': not current_sort['asc']}
-    return {'key': clicked_key, 'asc': False}
 
 # CALLBACK: Styr hastigheten på graf-uppdateringen
 @app.callback(
@@ -1008,8 +1009,6 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
     graph_hist_data = []
     
     if timeframe == '4h_live':
-        # För "4h Live" hämtar vi specifik data baserat på vald candle-intervall
-        # Vi använder cache om det är 15min (default), annars hämtar vi direkt för responsivitet
         if candle_interval == 15:
             raw_json = r.get(f'OHLC_LIVE_VIEW_{selected_ticker}') if r else None
             if raw_json:
@@ -1017,7 +1016,6 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
             else:
                  graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, 15, 3600 * 12)
         else:
-             # För 30m och 60m hämtar vi direkt (4h fönster)
              graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, candle_interval, 3600 * 12)
 
     elif timeframe == '1w':
@@ -1044,19 +1042,15 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
     if graph_hist_data and current_price_eur is not None and timeframe == '4h_live':
         last_entry = graph_hist_data[-1]
         last_time = last_entry['time']
-        
-        # Beräkna sekunder baserat på vald candle
         interval_seconds = candle_interval * 60
         current_time = int(time.time())
         current_graph_data = graph_hist_data.copy()
         
         if current_time < (last_time + interval_seconds):
-            # UPPDATERA SISTA CANDLEN (Vi är inne i den just nu)
             current_graph_data[-1]['close'] = current_price_eur
             current_graph_data[-1]['high'] = max(last_entry.get('high', -999), current_price_eur)
             current_graph_data[-1]['low'] = min(last_entry.get('low', 9999999), current_price_eur)
         else:
-            # SKAPA NY CANDLE
             next_block_time = last_time + interval_seconds
             current_graph_data.append({
                 'time': next_block_time,
@@ -1082,7 +1076,6 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
             'candle_interval': candle_interval
         }
     elif graph_hist_data:
-        # För icke-live grafer
         chart_data_store = {
             'historical_data': graph_hist_data,
             'current_price_eur': current_price_eur,
@@ -1102,19 +1095,14 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
 
 # CALLBACK 2: TABELLEN (Drivs av interval-slow, 2 minuter)
 @app.callback(
-    Output('crypto-summary', 'children'),
+    Output('crypto-table', 'data'),
     [Input('interval-slow', 'n_intervals'),
-     Input('coin-dropdown', 'value'),
-     Input('currency-dropdown', 'value'),
-     Input('table-sort-store', 'data')]
+     Input('currency-dropdown', 'value')]
 )
-def update_table_slow(n, coin_symbol, currency, sort_settings):
-    if not sort_settings:
-        sort_settings = {'key': 's24h', 'asc': False} 
-
+def update_table_slow(n, currency):
     data = get_data_from_redis()
     if data is None or 'EXCHANGE_RATES' not in data:
-        return html.Div("Laddar tabell...")
+        return []
 
     rates = data.get('EXCHANGE_RATES', {})
     eur_to_sek = rates.get('SEK', 11.0)
@@ -1126,7 +1114,7 @@ def update_table_slow(n, coin_symbol, currency, sort_settings):
     elif currency == 'USD': base_price_eur = eur_to_usd
     elif currency in COINS_SYMBOLS: base_price_eur = data.get(f'{currency}/EUR') 
 
-    summary_data = []
+    table_data = []
     for label in COINS_LABELS:
         sl = label.split(' ')[0]
         tl = CRYPTO_PAIRS[label]
@@ -1145,91 +1133,30 @@ def update_table_slow(n, coin_symbol, currency, sort_settings):
         elif currency == 'USD': pb = pe * eur_to_usd if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
-        summary_data.append({
-            'symbol': sl, 
-            'label': label, 
-            'price': pb, 
-            'percent': pd, 
-            'trade_value': tv_int, 
-            'sort_symbol': sl,
-            'sort_price': pb if pb is not None else -1,
-            'sort_tv': tv_int if tv_int is not None else -9999,
-            's30': pd.get('30m') if pd.get('30m') is not None else -9999,
-            's1h': pd.get('1h') if pd.get('1h') is not None else -9999,
-            's3h': pd.get('3h') if pd.get('3h') is not None else -9999,
-            's6h': pd.get('6h') if pd.get('6h') is not None else -9999,
-            's12h': pd.get('12h') if pd.get('12h') is not None else -9999,
-            's24h': pd.get('24h') if pd.get('24h') is not None else -9999,
-            's7d': pd.get('7d') if pd.get('7d') is not None else -9999,
-            's30d': pd.get('30d') if pd.get('30d') is not None else -9999
-        })
+        # Skapa markdown för logga + namn
+        logo_url = get_logo_url(sl)
+        label_markdown = f"![Logo]({logo_url}) **{label}**"
+        
+        # Formatera priset snyggt
+        price_formatted = f"{format_price_display(pb)} {currency}" if pb is not None else "N/A"
 
-    sort_key = sort_settings['key']
-    sort_asc = sort_settings['asc']
-    
-    summary_data.sort(
-        key=lambda x: x.get(sort_key, -9999), 
-        reverse=not sort_asc
-    )
-
-    cols_config = [
-        ("Valuta", "sort_symbol", "160px", "left"),
-        (f"Pris ({currency})", "sort_price", "140px", "right"),
-        ("30m", "s30", "1", "right"),
-        ("1h", "s1h", "1", "right"),
-        ("3h", "s3h", "1", "right"),
-        ("6h", "s6h", "1", "right"),
-        ("12h", "s12h", "1", "right"),
-        ("24h", "s24h", "1", "right"),
-        ("7d", "s7d", "1", "right"),
-        ("30d", "s30d", "1", "right"),
-        ("H.V.", "sort_tv", "80px", "right")
-    ]
-    
-    header_cells = []
-    for label_text, sort_id, width_val, align_val in cols_config:
-        cell_style = {
-            'cursor': 'pointer', 
-            'userSelect': 'none',
-            'padding': '0 5px'
+        row = {
+            'label': label_markdown,
+            'symbol': sl, # Gömd, används för klick-logik
+            'price': price_formatted,
+            '30m': pd.get('30m'),
+            '1h': pd.get('1h'),
+            '3h': pd.get('3h'),
+            '6h': pd.get('6h'),
+            '12h': pd.get('12h'),
+            '24h': pd.get('24h'),
+            '7d': pd.get('7d'),
+            '30d': pd.get('30d'),
+            'trade_value': tv_int
         }
-        
-        if "px" in width_val:
-            cell_style['flex'] = f'0 0 {width_val}'
-        else:
-            cell_style['flex'] = width_val
-            
-        cell_style['textAlign'] = align_val
-        
-        display_text = label_text
-        if sort_id == sort_key:
-            arrow = " ▲" if sort_asc else " ▼"
-            display_text += arrow
-            cell_style['color'] = '#0056b3' 
-            
-        header_cells.append(
-            html.Div(
-                display_text,
-                id={'type': 'sort-header', 'index': sort_id}, 
-                n_clicks=0,
-                style=cell_style
-            )
-        )
+        table_data.append(row)
 
-    header_style = {
-        'display': 'flex', 
-        'justifyContent': 'space-between', 
-        'fontWeight': 'bold', 
-        'padding': '7px 0', 
-        'borderBottom': '2px solid #0056b3', 
-        'backgroundColor': '#f0f0f0', 
-        'marginBottom': '5px', 
-        'color': '#495057', 
-        'fontSize': '0.85em'
-    }
-    
-    rows = [create_summary_row(item['symbol'], item['label'], item['price'], item['percent'], item['trade_value'], currency, item['symbol'] == coin_symbol, eur_to_sek) for item in summary_data]
-    return html.Div([html.Div(header_cells, style=header_style)] + rows)
+    return table_data
 
 @app.callback(
     Output('live-update-graph', 'figure'),
@@ -1246,7 +1173,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     
     figure = go.Figure()
     
-    # Hämta OHLC arrayer och hantera fallback för 'price' nyckeln
     prices_eur = [item.get('close', item.get('price')) for item in hist_data]
     opens_eur = [item.get('open', item.get('price')) for item in hist_data]
     highs_eur = [item.get('high', item.get('price')) for item in hist_data]
@@ -1263,21 +1189,18 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     highs = convert_currency(highs_eur)
     lows = convert_currency(lows_eur)
     
-    # Beräkna aktuellt pris i vald valuta för linjen/punkten
     current_price_converted = prices[-1] if prices else 0
 
     if timeframe == '4h_live':
         times = [time.strftime('%H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
         interval_label = f"{candle_interval}m"
         
-        # 1. RITA CANDLESTICKS
         figure.add_trace(go.Candlestick(
             x=times, open=opens, high=highs, low=lows, close=prices,
             name=f'Kurs ({interval_label})',
             increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
         ))
         
-        # 2. LÄGG TILL LIVE-MARKÖR (Punkt på sista candle)
         if times:
             figure.add_trace(go.Scatter(
                 x=[times[-1]], y=[current_price_converted],
@@ -1286,10 +1209,8 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
                 marker=dict(color='blue', size=10, symbol='circle', line=dict(color='white', width=2))
             ))
 
-        # 3. HORISONTELL PRISLINJE
         figure.add_hline(y=current_price_converted, line_dash="dot", line_color="blue", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
         
-        # 4. TRENDLINJE (4h Live)
         slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
         if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
@@ -1299,7 +1220,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         figure.update_layout(xaxis_rangeslider_visible=False) 
 
     else:
-        # Standard linjegraf för övriga vyer
         times = [time.strftime('%Y-%m-%d %H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
         figure.add_trace(go.Scatter(x=times, y=prices, mode='lines', name=f'Kurs', line=dict(color='#0056b3', width=2)))
 
@@ -1308,7 +1228,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     elif timeframe == '1w': time_label = "1 Vecka (15m)"
     elif timeframe == '1m': time_label = "1 Månad (60m)"
 
-    # Period Hög/Låg linjer
     if timeframe in ['1d', '4h_live']:
         high_val, low_val = max(highs) if highs else None, min(lows) if lows else None
         if high_val and high_val != current_price_converted: 
@@ -1316,7 +1235,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
         if low_val and low_val != current_price_converted: 
             figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="Låg", annotation_position="bottom left", opacity=0.3)
 
-    # Blå punkt för historikvyerna (ej live-vyn då den har specialmarkör ovan)
     if timeframe in ['1d', '1w', '1m'] and times and prices:
         figure.add_trace(go.Scatter(
             x=[times[-1]], y=[prices[-1]],
@@ -1325,7 +1243,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
             marker=dict(color='blue', size=8)
         ))
 
-    # Trendlinjer (1d, 1w, 1m)
     if timeframe == '1d':
         for key in selected_trends:
             config = TREND_WINDOWS.get(key)
@@ -1338,7 +1255,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
                 figure.add_trace(go.Scatter(x=times[start_idx:], y=trend_y, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash')))
     
     elif timeframe in ['1w', '1m']:
-         # Trendlinje för vecka/månad
          slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
          if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
@@ -1354,21 +1270,48 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     )
     return figure
 
+# Uppdaterad Callback för att välja valuta via tabell-klick
 @app.callback(
     Output('coin-dropdown', 'value'),
-    [Input({'type': 'summary-card', 'index': ALL}, 'n_clicks'),
+    [Input('crypto-table', 'active_cell'),
      Input('initial-coin-symbol-store', 'data')],
-    [State({'type': 'summary-card', 'index': ALL}, 'id')]
+    [State('crypto-table', 'data')]
 )
-def update_dropdown_selection(n_clicks, initial_coin, ids):
+def update_dropdown_selection(active_cell, initial_coin, table_data):
     trigger = ctx.triggered_id
     if not trigger or trigger == 'initial-coin-symbol-store':
         return initial_coin if initial_coin else dash.no_update
     
-    if isinstance(trigger, dict) and trigger.get('type') == 'summary-card':
-          if not any(n_clicks): return dash.no_update
-          return trigger['index']
-          
+    if active_cell and table_data:
+        row = active_cell['row']
+        # I en sorterad tabell måste vi titta på den faktiska datan, inte bara index
+        # Dash Table skickar oftast den sorterade datan i 'derived_virtual_data' (State),
+        # men här förenklar vi genom att anta att 'data' är korrekt eller att vi hämtar symbolen.
+        # För bättre robusthet vid sortering bör man använda 'derived_virtual_data' som State istället för 'data'.
+        # Men låt oss kolla om vi kan hämta det enkelt:
+        if row < len(table_data):
+             # Om tabellen är sorterad på klienten, stämmer inte indexet i 'data' (som är ursprungsdatan)
+             # med active_cell['row']. 
+             # Lösning: Använd State('crypto-table', 'derived_virtual_data') om vi hade det.
+             # Då jag inte ändrade signaturen ovan för att inkludera derived_virtual_data i denna edit,
+             # lägger jag till det nu för att det ska fungera korrekt med sortering:
+             pass 
+             
+    return dash.no_update
+
+# Korrigering av callbacken ovan för att stödja sortering:
+@app.callback(
+    Output('coin-dropdown', 'value', allow_duplicate=True),
+    [Input('crypto-table', 'active_cell')],
+    [State('crypto-table', 'derived_virtual_data')],
+    prevent_initial_call=True
+)
+def update_dropdown_selection_sorted(active_cell, virtual_data):
+    if active_cell and virtual_data:
+        row_index = active_cell['row']
+        if row_index < len(virtual_data):
+            selected_row = virtual_data[row_index]
+            return selected_row['symbol']
     return dash.no_update
 
 if __name__ == '__main__':

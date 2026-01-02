@@ -546,7 +546,7 @@ def background_data_fetch(redis_instance):
                          
                     # Hämta 15min data som grund för Live-vyn 
                     # Vi cachear detta som standard, om användaren väljer 30m/1h hämtas det direkt i callback
-                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 4)
+                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 12)
                     if ohlc_live_view:
                         redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
                 
@@ -891,7 +891,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                      dcc.RadioItems(
                         id='graph-timeframe',
                         options=[
-                            {'label': ' 4 Timmar (Live)', 'value': '4h_live'},
+                            {'label': ' 12 Timmar (Live)', 'value': '4h_live'},
                             {'label': ' 1 Dag (5m)', 'value': '1d'},
                             {'label': ' 1 Vecka (15m)', 'value': '1w'},
                             {'label': ' 1 Månad (60m)', 'value': '1m'}
@@ -1015,10 +1015,10 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
             if raw_json:
                 graph_hist_data = json.loads(raw_json)
             else:
-                 graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, 15, 3600 * 4)
+                 graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, 15, 3600 * 12)
         else:
              # För 30m och 60m hämtar vi direkt (4h fönster)
-             graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, candle_interval, 3600 * 4)
+             graph_hist_data = fetch_ohlc_data_from_kraken(selected_ticker, candle_interval, 3600 * 12)
 
     elif timeframe == '1w':
         raw_json = r.get(f'OHLC_1WEEK_{selected_ticker}') if r else None

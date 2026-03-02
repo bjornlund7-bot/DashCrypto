@@ -91,7 +91,7 @@ CRYPTO_PAIRS = {
     'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR',
     'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'TON/EUR',
     'AAVE (Aave)': 'AAVE/EUR', 'ONDO (Ondo)': 'ONDO/EUR', 'QNT (Quant)': 'QNT/EUR', 'RENDER (Render)': 'RENDER/EUR',
-    'ALMANAK (Almanak)': 'ALMANAK/EUR', NOBODY (Nobody Sausage)': 'NOBODY/EUR'
+    'ALMANAK (Almanak)': 'ALMANAK/EUR', NOBODY (Nobody Sausage)': 'NOBODY/EUR',
 }
 
 DEFAULT_PAIR_KEY = 'XRP (Ripple)'

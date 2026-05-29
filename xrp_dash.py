@@ -528,6 +528,48 @@ def check_and_send_alerts(alert_data, r_instance):
                         send_telegram_message(msg)
                         logger.info(f"Telegram Alert: {coin_symbol} {threshold}% ({period})")
 
+
+
+# ==========================================
+# NYA FUNKTIONER FÖR KÖP/SÄLJ-SIGNALER (SMA)
+# ==========================================
+def calculate_sma(ohlc_data, period_blocks):
+    if not ohlc_data or len(ohlc_data) < period_blocks:
+        return None
+    prices = [item['close'] for item in ohlc_data[-period_blocks:]]
+    return sum(prices) / len(prices)
+
+def check_sma_crossover(coin_symbol, current_price_eur, ohlc_data, r_instance):
+    if not ohlc_data or len(ohlc_data) < 50:
+        return
+    short_sma = calculate_sma(ohlc_data, 10)
+    long_sma = calculate_sma(ohlc_data, 50)
+    if short_sma is None or long_sma is None:
+        return
+        
+    state_key = f"sma_state:{coin_symbol}"
+    previous_state = r_instance.get(state_key) if r_instance else None
+    if previous_state:
+        previous_state = previous_state.decode('utf-8')
+        
+    current_state = "bullish" if short_sma > long_sma else "bearish"
+    
+    if previous_state and previous_state != current_state:
+        coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+        if current_state == "bullish":
+            msg = f"🟢 **KÖPSIGNAL (SMA Crossover)** 🟢\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nTrend: *Kort SMA (10) korsade nyss Lång SMA (50) uppåt.*"
+        else:
+            msg = f"🔴 **SÄLJSIGNAL (SMA Crossover)** 🔴\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nTrend: *Kort SMA (10) korsade nyss Lång SMA (50) nedåt.*"
+        send_telegram_message(msg)
+        logger.info(f"SMA Alert skickad: {coin_symbol} {current_state}")
+    
+    if r_instance:
+        r_instance.set(state_key, current_state)
+# ==========================================
+
+
+
+
 # --- Bakgrundstrådar ---
 
 def background_data_fetch(redis_instance):
@@ -572,6 +614,9 @@ def background_data_fetch(redis_instance):
                     ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                     if ohlc_5min_data:
                          redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
+
+# Aktivera vår Köp/Sälj-algoritm live
+                        check_sma_crossover(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
                     periods_ago_1y = 365 * 86400 * 1.1 
                     ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_1y) 
@@ -1318,6 +1363,30 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
              trend_y = convert_currency(trend_y_eur)
              figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
+
+
+# ==========================================
+    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN
+    # ==========================================
+    import pandas as pd
+    if len(hist_data) >= 50:
+        close_prices = [item['close'] for item in hist_data]
+        price_series = pd.Series(close_prices)
+        
+        sma_short = price_series.rolling(window=10).mean().tolist()
+        sma_long = price_series.rolling(window=50).mean().tolist()
+        
+        figure.add_trace(go.Scatter(
+            x=times, y=convert_currency(sma_short), mode='lines', 
+            name='Kort SMA (10)', line=dict(color='#00E676', width=2)
+        ))
+        figure.add_trace(go.Scatter(
+            x=times, y=convert_currency(sma_long), mode='lines', 
+            name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
+        ))
+    # ==========================================
+
+
 
         figure.update_layout(xaxis_rangeslider_visible=False) 
 

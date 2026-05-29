@@ -27,15 +27,42 @@ KRAKEN_TICKER_API_URL = "https://api.kraken.com/0/public/Ticker"
 KRAKEN_OHLC_API_URL = "https://api.kraken.com/0/public/OHLC"
 EXCHANGE_RATE_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
 
-# Ny källa för logotyper (CoinCap assets är ofta mycket pålitliga)
+# URL för logotyper
 LOGO_BASE_URL = "https://assets.coincap.io/assets/icons/"
 
-# Manuella överskridningar för "exotiska" coins som inte finns i standard-listan
+# Färgteman
+THEMES = {
+    'light': {
+        'bg': '#f8f9fa',
+        'container_bg': 'white',
+        'text': '#495057',
+        'text_header': '#0056b3',
+        'border': '#dee2e6',
+        'graph_template': 'plotly_white',
+        'table_header': '#f0f0f0',
+        'table_cell': 'white',
+        'dropdown_bg': 'white',
+        'dropdown_text': '#333'
+    },
+    'dark': {
+        'bg': '#121212',
+        'container_bg': '#1e1e1e',
+        'text': '#e0e0e0',
+        'text_header': '#90caf9',
+        'border': '#333333',
+        'graph_template': 'plotly_dark',
+        'table_header': '#2c2c2c',
+        'table_cell': '#1e1e1e',
+        'dropdown_bg': '#2c2c2c',
+        'dropdown_text': '#e0e0e0'
+    }
+}
+
 LOGO_OVERRIDES = {
     'GRASS': 'https://cryptologos.cc/logos/grass-grass-logo.png',
     'WIF': 'https://s2.coinmarketcap.com/static/img/coins/64x64/28752.png',
     'PEPE': 'https://assets.coincap.io/assets/icons/pepe@2x.png',
-    'PUMP': 'https://s2.coinmarketcap.com/static/img/coins/64x64/29272.png', # Exempel
+    'PUMP': 'https://s2.coinmarketcap.com/static/img/coins/64x64/29272.png',
     'TRUMP': 'https://s2.coinmarketcap.com/static/img/coins/64x64/31535.png',
     'DOGE': 'https://assets.coincap.io/assets/icons/doge@2x.png',
     'SOL': 'https://assets.coincap.io/assets/icons/sol@2x.png',
@@ -61,10 +88,10 @@ CRYPTO_PAIRS = {
     'KSM (Kusama)': 'KSM/EUR', 'EUL (Euler)': 'EUL/EUR', 'GMX (GMX)': 'GMX/EUR',
     'AUCTION (Bounce)': 'AUCTION/EUR', 'MOVR (Moonriver)': 'MOVR/EUR', 'SSV (SSV Network)': 'SSV/EUR',
     'MLN (Enzyme Finance)': 'MLN/EUR', 'ALCX (Alchemix)': 'ALCX/EUR', 'AERO (Aerodrome Finance)': 'AERO/EUR',
-    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR', 'XNAP (SNAPX)': 'XNAP/EUR',
+    'MYX (MYX Finance)': 'MYX/EUR', 'GNO (Gnosis)': 'GNO/EUR', 'KOBAN (Lucky Kat)': 'KOBAN/EUR',
     'LINK (Chainlink)': 'LINK/EUR', 'XLM (Lumen)': 'XLM/EUR', 'HBAR (Hedera)': 'HBAR/EUR', 'TON (Toncoin)': 'TON/EUR',
     'AAVE (Aave)': 'AAVE/EUR', 'ONDO (Ondo)': 'ONDO/EUR', 'QNT (Quant)': 'QNT/EUR', 'RENDER (Render)': 'RENDER/EUR',
-    'BRICK (Bricks)': 'BRICK/EUR', 'ALMANAK (Almanak)': 'ALMANAK/EUR',
+    'ALMANAK (Almanak)': 'ALMANAK/EUR', 'NOBODY (Nobody Sausage)': 'NOBODY/EUR',
 }
 
 DEFAULT_PAIR_KEY = 'XRP (Ripple)'
@@ -145,7 +172,6 @@ def get_logo_url(symbol):
     s_upper = symbol.upper()
     if s_upper in LOGO_OVERRIDES:
         return LOGO_OVERRIDES[s_upper]
-    # Standard CoinCap URL (använder lowercase)
     return f"{LOGO_BASE_URL}{symbol.lower()}@2x.png"
 
 def format_price_display(p):
@@ -436,15 +462,6 @@ def format_trade_value_display(v):
     symbol = '▲' if val > 0 else '▼'
     return html.Span(f"{symbol} {abs(val)}", style={'color': color, 'fontWeight': 'bold', 'fontSize': '0.85em'})
 
-def format_price_color_summary(price_in_base, change_24h):
-    if price_in_base is None: return html.Div("N/A", style={'color': '#6c757d'})
-    price_str = format_price_display(price_in_base)
-    color = '#495057'
-    if change_24h is not None:
-        if change_24h >= 0.01: color = '#28a745'
-        elif change_24h <= -0.01: color = '#dc3545'
-    return html.Div(price_str, style={'flex': '0 0 100px', 'textAlign': 'right', 'fontWeight': 'bold', 'paddingRight': '5px', 'color': color})
-
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
     try:
@@ -663,17 +680,22 @@ if r:
 
 # --- Helpers för Layout ---
 
-def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None): 
+def create_selected_coin_box(label, symbol, price, currency, base_price_eur, high_eur, low_eur, percent_data, trade_value=None, individual_trends=None, diff_24h_eur=None, theme='light'): 
     if individual_trends is None: individual_trends = {}
+    colors = THEMES[theme]
         
     price_text = f"{format_price_display(price)} {currency}"
     # Logo istället för emoji (utan onError för att undvika Render-krasch)
     logo_img = html.Img(src=get_logo_url(symbol), style={'width': '35px', 'height': '35px', 'marginRight': '10px', 'verticalAlign': 'middle'})
     
     change_24h = percent_data.get('24h') 
-    price_color = '#28a745' if change_24h and change_24h > 0 else '#dc3545' if change_24h and change_24h < 0 else '#495057'
-    trade_value_color = '#006400' if trade_value and trade_value > 0 else '#8B0000' if trade_value and trade_value < 0 else '#495057'
-    
+    price_color = '#28a745' if change_24h and change_24h > 0 else '#dc3545' if change_24h and change_24h < 0 else colors['text']
+    trade_value_color = '#006400' if trade_value and trade_value > 0 else '#8B0000' if trade_value and trade_value < 0 else colors['text']
+    # Anpassa mörkgrön/mörkröd för dark mode om nödvändigt, annars fungerar standardfärgerna hyfsat
+    if theme == 'dark':
+        if trade_value and trade_value > 0: trade_value_color = '#4caf50'
+        if trade_value and trade_value < 0: trade_value_color = '#ef5350'
+
     multiplier = 1
     high_display, low_display = None, None
     if high_eur is not None and low_eur is not None and base_price_eur:
@@ -692,7 +714,7 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
     def create_change_row(period, value):
         display_name = {'7d': '7dgr', '30d': '30dgr', '6m': '6mån', '1y': '1år', '30m': '30min'}.get(period, period)
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'margin': '3px 0', 'padding': '0 5px', 'fontSize': '0.9em'},
-                        children=[html.Span(f"{display_name.capitalize()}:", style={'color': '#6c757d', 'flex': '0 0 50px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
+                        children=[html.Span(f"{display_name.capitalize()}:", style={'color': colors['text'], 'opacity': '0.7', 'flex': '0 0 50px'}), html.Div(value, style={'flex': '1', 'textAlign': 'right'})])
         
     short_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '5min']
     long_term_keys = [k for k, v in TREND_WINDOWS.items() if v.get('source') == '1day']
@@ -707,10 +729,10 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             diff_24h_base = diff_24h_eur / base_price_eur 
 
     main_price_section = html.Div(style={'flex': '1 1 300px', 'minWidth': '300px', 'paddingRight': '15px'}, children=[
-        html.H2([logo_img, html.Span(f"{label} ({symbol})")], style={'fontSize': '1.5em', 'color': '#0056b3', 'marginBottom': '5px', 'textAlign': 'center', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center'}),
+        html.H2([logo_img, html.Span(f"{label} ({symbol})")], style={'fontSize': '1.5em', 'color': colors['text_header'], 'marginBottom': '5px', 'textAlign': 'center', 'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center'}),
         
         html.Div(style={'textAlign': 'center', 'marginTop': '10px'}, children=[
-            html.P("Nuvarande Pris", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.9em'}),
+            html.P("Nuvarande Pris", style={'margin': '0', 'color': colors['text'], 'opacity': '0.7', 'fontWeight': 'bold', 'fontSize': '0.9em'}),
             html.P(price_text, id='current-price-display', style={'fontSize': '2.5em', 'fontWeight': '800', 'color': price_color, 'margin': '0'}),
         ]),
         
@@ -718,25 +740,25 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
             html.Span(f"({'+' if diff_24h_base >= 0 else ''}{diff_24h_base:,.4f} {currency}, ", style={'marginRight': '0px'}),
             format_change(change_24h), 
             html.Span(")")
-        ] if diff_24h_base is not None else html.P("24h Diff: N/A", style={'fontSize': '0.8em', 'color': '#6c757d'})),
+        ] if diff_24h_base is not None else html.P("24h Diff: N/A", style={'fontSize': '0.8em', 'color': colors['text']})),
 
-        html.Div(style={'textAlign': 'center', 'marginTop': '15px', 'padding': '5px 0', 'borderTop': '1px solid #dee2e6'}, children=[
-            html.P("Handelsvärde (Viktad Trendindikator)", style={'margin': '0', 'color': '#6c757d', 'fontWeight': 'bold', 'fontSize': '0.8em'}),
+        html.Div(style={'textAlign': 'center', 'marginTop': '15px', 'padding': '5px 0', 'borderTop': f'1px solid {colors["border"]}'}, children=[
+            html.P("Handelsvärde (Viktad Trendindikator)", style={'margin': '0', 'color': colors['text'], 'opacity': '0.7', 'fontWeight': 'bold', 'fontSize': '0.8em'}),
             html.P(f"{trade_value:,.2f}" if trade_value is not None else "N/A", style={'fontSize': '1.8em', 'fontWeight': '800', 'color': trade_value_color, 'margin': '0'})
         ])
     ])
 
-    changes_section = html.Div(style={'flex': '1 1 250px', 'minWidth': '250px', 'padding': '0 15px', 'borderLeft': '1px solid #dee2e6'}, children=[
-        html.P("Prisrörelser (%) & 24h Intervall", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
+    changes_section = html.Div(style={'flex': '1 1 250px', 'minWidth': '250px', 'padding': '0 15px', 'borderLeft': f'1px solid {colors["border"]}'}, children=[
+        html.P("Prisrörelser (%) & 24h Intervall", style={'margin': '0 0 10px 0', 'color': colors['text'], 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
-        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': '1px solid #dee2e6', 'fontSize': '0.9em'}, children=[
+        html.Div(style={'padding': '5px 0 10px 0', 'borderBottom': f'1px solid {colors["border"]}', 'fontSize': '0.9em'}, children=[
             html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '5px'}, children=[
-                html.Span("Hög 24h:", style={'fontWeight': 'bold', 'color': 'green'}), 
-                html.Span(f"{format_price_display(high_display)} {currency}" if high_display is not None else "N/A", style={'color': 'green', 'fontWeight': '600'})
+                html.Span("Hög 24h:", style={'fontWeight': 'bold', 'color': '#4caf50' if theme=='dark' else 'green'}), 
+                html.Span(f"{format_price_display(high_display)} {currency}" if high_display is not None else "N/A", style={'color': '#4caf50' if theme=='dark' else 'green', 'fontWeight': '600'})
             ]),
             html.Div(style={'display': 'flex', 'justifyContent': 'space-between'}, children=[
-                html.Span("Låg 24h:", style={'fontWeight': 'bold', 'color': 'red'}), 
-                html.Span(f"{format_price_display(low_display)} {currency}" if low_display is not None else "N/A", style={'color': 'red', 'fontWeight': '600'})
+                html.Span("Låg 24h:", style={'fontWeight': 'bold', 'color': '#ef5350' if theme=='dark' else 'red'}), 
+                html.Span(f"{format_price_display(low_display)} {currency}" if low_display is not None else "N/A", style={'color': '#ef5350' if theme=='dark' else 'red', 'fontWeight': '600'})
             ]),
         ]),
         
@@ -771,31 +793,31 @@ def create_selected_coin_box(label, symbol, price, currency, base_price_eur, hig
         val_str = f"{val:,.2f}" if val is not None else "N/A"
         price_str = f" ({format_price_display(trend_price)})" if trend_price is not None else ""
         
-        color = '#6c757d'
+        color = colors['text']
         if val is not None:
-            if val > 0: color = '#006400'
-            elif val < 0: color = '#8B0000'
+            if val > 0: color = '#4caf50' if theme=='dark' else '#006400'
+            elif val < 0: color = '#ef5350' if theme=='dark' else '#8B0000'
 
         return html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '3px'}, children=[
-            html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': '#6c757d', 'fontWeight': 'bold'}), 
+            html.Span(f"{TREND_WINDOWS[key]['name'].split(' ')[1]}:", style={'color': colors['text'], 'opacity': '0.7', 'fontWeight': 'bold'}), 
             html.Span(f"{val_str}{price_str}", style={'color': color, 'fontWeight': '600'})
         ])
 
-    trend_section = html.Div(style={'flex': '1 1 200px', 'minWidth': '200px', 'paddingLeft': '15px', 'borderLeft': '1px solid #dee2e6'}, children=[
-        html.P("Trendvärden (Hₓ) - Riktning/Vikt", style={'margin': '0 0 10px 0', 'color': '#495057', 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
+    trend_section = html.Div(style={'flex': '1 1 200px', 'minWidth': '200px', 'paddingLeft': '15px', 'borderLeft': f'1px solid {colors["border"]}'}, children=[
+        html.P("Trendvärden (Hₓ) - Riktning/Vikt", style={'margin': '0 0 10px 0', 'color': colors['text'], 'fontWeight': 'bold', 'textAlign': 'center', 'fontSize': '0.9em'}),
         
-        html.P("Kort Sikt (5m data)", style={'margin': '0 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold'}),
+        html.P("Kort Sikt (5m data)", style={'margin': '0 0 5px 0', 'color': colors['text'], 'opacity': '0.7', 'fontSize': '0.8em', 'fontWeight': 'bold'}),
         html.Div([
             render_trend_row(key) for key in short_term_keys if key in individual_trends 
         ]),
         
-        html.P("Lång Sikt (1d data)", style={'margin': '10px 0 5px 0', 'color': '#6c757d', 'fontSize': '0.8em', 'fontWeight': 'bold', 'borderTop': '1px dotted #dee2e6', 'paddingTop': '5px'}),
+        html.P("Lång Sikt (1d data)", style={'margin': '10px 0 5px 0', 'color': colors['text'], 'opacity': '0.7', 'fontSize': '0.8em', 'fontWeight': 'bold', 'borderTop': f'1px dotted {colors["border"]}', 'paddingTop': '5px'}),
         html.Div([
             render_trend_row(key) for key in long_term_keys if key in individual_trends 
         ]),
     ])
 
-    return html.Div(id='current-price-box', style={'border': '2px solid #0056b3', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa'}, children=[
+    return html.Div(id='current-price-box', style={'border': f'2px solid {colors["text_header"]}', 'borderRadius': '10px', 'padding': '15px', 'marginBottom': '20px', 'backgroundColor': colors['container_bg']}, children=[
             html.Div(style={'display': 'flex', 'justifyContent': 'space-around', 'alignItems': 'flex-start', 'flexWrap': 'wrap', 'gap': '10px'}, children=[
                 main_price_section, 
                 changes_section, 
@@ -812,7 +834,7 @@ server = app.server
 # Kolumndefinitioner för DataTable
 TABLE_COLUMNS = [
     {"name": "Valuta", "id": "label", "presentation": "markdown"}, # Logo + Namn
-    {"name": "Pris", "id": "price", "type": "text"}, # Pris som text för enkel formatering
+    {"name": "Pris (24h%)", "id": "price", "type": "text"}, 
     {"name": "30m", "id": "30m", "type": "numeric", "format": {"specifier": "+.2f"}},
     {"name": "1h", "id": "1h", "type": "numeric", "format": {"specifier": "+.2f"}},
     {"name": "3h", "id": "3h", "type": "numeric", "format": {"specifier": "+.2f"}},
@@ -824,24 +846,36 @@ TABLE_COLUMNS = [
     {"name": "H.V.", "id": "trade_value", "type": "numeric", "format": {"specifier": "+d"}},
 ]
 
-app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
-    html.Div(style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'backgroundColor': 'white', 'border': '1px solid #dee2e6'}, children=[
-        html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'marginBottom': '30px', 'fontSize': '1.8em'}),
+app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
+    html.Div(id='content-container', style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'border': '1px solid #dee2e6'}, children=[
+        html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '30px'}, children=[
+            html.H1('📈 DJ-Investment Dashboard (Kraken Live)', style={'textAlign': 'center', 'color': '#0056b3', 'margin': '0', 'flex': '1'}),
+            html.Div([
+                dcc.Checklist(
+                    id='theme-switch',
+                    options=[{'label': ' Dark Mode', 'value': 'dark'}],
+                    value=[],
+                    inline=True,
+                    inputStyle={"margin-right": "5px"}
+                )
+            ], style={'marginLeft': '20px'})
+        ]),
+        
         html.Div(style={'display': 'flex', 'gap': '20px', 'marginBottom': '20px', 'flexWrap': 'wrap'}, children=[
             html.Div(style={'flex': '0 0 200px', 'minWidth': '200px'}, children=[
-                html.H3('⚙️ Kontroller', style={'fontSize': '1.3em', 'color': '#495057', 'marginBottom': '15px'}),
+                html.H3('⚙️ Kontroller', id='controls-header', style={'fontSize': '1.3em', 'marginBottom': '15px'}),
                 html.Div(style={'marginBottom': '20px'}, children=[
-                    html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
+                    html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'display': 'block'}),
                     dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_COIN_SYMBOL, clearable=False),
                 ]),
                 html.Div(children=[
-                    html.Label("Välj basvaluta/krypto:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'color': '#495057', 'display': 'block'}),
+                    html.Label("Välj basvaluta/krypto:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'display': 'block'}),
                     dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in BASE_CURRENCIES], value='EUR', clearable=False),
                 ]),
             ]),
             html.Div(style={'flex': '1 1 600px', 'minWidth': '600px'}, children=[
                 html.Div(id='current-price-summary-box-container'),
-                html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'color': '#6c757d', 'marginBottom': '0px'}),
+                html.Div(id='last-updated', style={'textAlign': 'center', 'fontSize': '0.9em', 'marginBottom': '0px'}),
             ]),
             dcc.Store(id='chart-data-store'), 
             dcc.Store(id='current-currency-store'),
@@ -851,7 +885,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
         html.Div(style={'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
             html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '10px'}, children=[
                 html.Div(style={'display': 'flex', 'alignItems': 'center'}, children=[
-                     html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '15px', 'fontSize': '0.9em'}),
+                     html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'marginRight': '15px', 'fontSize': '0.9em'}),
                      dcc.Checklist(
                          id='trendline-checkboxes',
                          options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items() if config.get('show_line')],
@@ -861,7 +895,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                      ),
                 ]),
                 html.Div(style={'display': 'flex', 'alignItems': 'center'}, children=[
-                     html.Label("Candle (Live):", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '5px', 'fontSize': '0.9em'}),
+                     html.Label("Candle (Live):", style={'fontWeight': 'bold', 'marginRight': '5px', 'fontSize': '0.9em'}),
                      dcc.Dropdown(
                         id='live-candle-interval',
                         options=[
@@ -873,7 +907,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                         clearable=False,
                         style={'width': '100px', 'marginRight': '20px'}
                      ),
-                     html.Label("Graf Tidsintervall:", style={'fontWeight': 'bold', 'color': '#495057', 'marginRight': '10px', 'fontSize': '0.9em'}),
+                     html.Label("Graf Tidsintervall:", style={'fontWeight': 'bold', 'marginRight': '10px', 'fontSize': '0.9em'}),
                      dcc.RadioItems(
                         id='graph-timeframe',
                         options=[
@@ -892,7 +926,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
         ]),
         
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
-             html.H3('📊 Sammanfattning: Handelsvärde & Prisrörelser', style={'fontSize': '1.3em', 'color': '#0056b3', 'marginBottom': '10px'}),
+             html.H3('📊 Sammanfattning: Handelsvärde & Prisrörelser', id='summary-header', style={'fontSize': '1.3em', 'marginBottom': '10px'}),
              dcc.Loading(id="loading-2", type="dot", children=[
                  dash_table.DataTable(
                      id='crypto-table',
@@ -900,6 +934,7 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                      data=[], # Fylls av callback
                      sort_action="native",
                      sort_mode="single",
+                     sort_by=[{'column_id': '24h', 'direction': 'desc'}], # STANDARDSORTERING PÅ 24h
                      style_table={'overflowX': 'auto'},
                      style_cell={
                          'textAlign': 'right',
@@ -908,7 +943,6 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
                          'fontSize': '0.9em'
                      },
                      style_header={
-                         'backgroundColor': '#f0f0f0',
                          'fontWeight': 'bold',
                          'borderBottom': '2px solid #0056b3'
                      },
@@ -945,8 +979,8 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
         
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
-            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0'}),
-            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap'}, children=[
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}), # Textfärg tvingad till svart här
+            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ # Textfärg tvingad till svart här
                 html.Div([
                     html.P('**Prisrörelser (%):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0 0 5px 0'}),
                     html.Ul([html.Li(f'+{t}%' if t > 0 else f'{t}%') for t in ALERT_THRESHOLDS_UP[::-1] + ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
@@ -965,6 +999,26 @@ app.layout = html.Div(style={'backgroundColor': '#f8f9fa', 'minHeight': '100vh',
 ])
 
 # --- Callbacks ---
+
+# CALLBACK: Uppdatera huvudstil för Dark/Light Mode
+@app.callback(
+    [Output('main-layout', 'style'),
+     Output('content-container', 'style'),
+     Output('controls-header', 'style'),
+     Output('summary-header', 'style'),
+     Output('last-updated', 'style')],
+    [Input('theme-switch', 'value')]
+)
+def update_main_style(theme_value):
+    theme = 'dark' if theme_value else 'light'
+    colors = THEMES[theme]
+    
+    main_style = {'backgroundColor': colors['bg'], 'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif', 'color': colors['text']}
+    content_style = {'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'border': f'1px solid {colors["border"]}', 'backgroundColor': colors['container_bg']}
+    header_style = {'fontSize': '1.3em', 'marginBottom': '15px', 'color': colors['text']}
+    last_updated_style = {'textAlign': 'center', 'fontSize': '0.9em', 'marginBottom': '0px', 'color': colors['text']}
+    
+    return main_style, content_style, header_style, header_style, last_updated_style
 
 # CALLBACK: Styr hastigheten på graf-uppdateringen
 @app.callback(
@@ -987,12 +1041,14 @@ def update_interval_speed(timeframe):
      Input('coin-dropdown', 'value'), 
      Input('currency-dropdown', 'value'),
      Input('graph-timeframe', 'value'),
-     Input('live-candle-interval', 'value')] 
+     Input('live-candle-interval', 'value'),
+     Input('theme-switch', 'value')] 
 )
-def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval):
+def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval, theme_value):
     data = get_data_from_redis()
+    theme = 'dark' if theme_value else 'light'
     if data is None or 'EXCHANGE_RATES' not in data:
-        loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, None, None, {}, None, {}, None)
+        loading_box = create_selected_coin_box("Laddar...", "", 0.0, currency, 11.0, None, None, {}, None, {}, None, theme=theme)
         return loading_box, "Väntar...", None, currency
 
     rates = data.get('EXCHANGE_RATES', {})
@@ -1105,27 +1161,32 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval)
     percent_data = data.get('ALL_PERCENT_CHANGE', {}).get(coin_symbol, {})
     range_data = data.get('ALL_24H_RANGE_OHLC', {}).get(coin_symbol, {})
     
-    summary_box = create_selected_coin_box(coin_label, coin_symbol, current_price_base or 0.0, currency, base_price_eur, range_data.get('high_eur'), range_data.get('low_eur'), percent_data, trade_value, individual_trends, diff_24h_eur)
+    summary_box = create_selected_coin_box(coin_label, coin_symbol, current_price_base or 0.0, currency, base_price_eur, range_data.get('high_eur'), range_data.get('low_eur'), percent_data, trade_value, individual_trends, diff_24h_eur, theme=theme)
     
     return summary_box, updated_text, chart_data_store, currency
 
 
 # CALLBACK 2: TABELLEN (Drivs av interval-slow, 2 minuter)
 @app.callback(
-    Output('crypto-table', 'data'),
+    [Output('crypto-table', 'data'),
+     Output('crypto-table', 'style_header'),
+     Output('crypto-table', 'style_cell')],
     [Input('interval-slow', 'n_intervals'),
-     Input('currency-dropdown', 'value')]
+     Input('currency-dropdown', 'value'),
+     Input('theme-switch', 'value')]
 )
-def update_table_slow(n, currency):
+def update_table_slow(n, currency, theme_value):
+    theme = 'dark' if theme_value else 'light'
+    colors = THEMES[theme]
+    
     data = get_data_from_redis()
     if data is None or 'EXCHANGE_RATES' not in data:
-        return []
+        return [], {}, {}
 
     rates = data.get('EXCHANGE_RATES', {})
     eur_to_sek = rates.get('SEK', 11.0)
     eur_to_usd = rates.get('USD', 1.05)
     
-    timestamp = data.get('timestamp')
     base_price_eur = 1.0 
     if currency == 'SEK': base_price_eur = eur_to_sek 
     elif currency == 'USD': base_price_eur = eur_to_usd
@@ -1142,7 +1203,7 @@ def update_table_slow(n, currency):
         
         tv_int = None
         if h5 and pe:
-            tv_val, _ = calculate_trade_value(h5 + [{'time': timestamp, 'price': pe}], pe, h1 + [{'time': timestamp, 'price': pe}])
+            tv_val, _ = calculate_trade_value(h5 + [{'time': data.get('timestamp'), 'price': pe}], pe, h1 + [{'time': data.get('timestamp'), 'price': pe}])
             if tv_val is not None: tv_int = int(round(tv_val))
         
         pb = pe
@@ -1150,12 +1211,15 @@ def update_table_slow(n, currency):
         elif currency == 'USD': pb = pe * eur_to_usd if pe else None
         elif currency != 'EUR' and base_price_eur: pb = pe / base_price_eur if pe else None
 
-        # Skapa HTML för logga + namn
-        # OBS: Vi använder HTML-tagg här för att kunna styra width/height exakt (24px)
         logo_url = get_logo_url(sl)
         label_html = f"<img src='{logo_url}' style='height: 24px; width: 24px; vertical-align: middle; margin-right: 8px;' /> **{label}**"
         
+        # Formatera priset med 24h% inom parentes
         price_formatted = f"{format_price_display(pb)} {currency}" if pb is not None else "N/A"
+        change_24h_val = pd.get('24h')
+        if change_24h_val is not None:
+            sign = "+" if change_24h_val >= 0 else ""
+            price_formatted += f" ({sign}{change_24h_val:.2f}%)"
 
         row = {
             'label': label_html,
@@ -1173,15 +1237,36 @@ def update_table_slow(n, currency):
         }
         table_data.append(row)
 
-    return table_data
+    style_header = {
+        'backgroundColor': colors['table_header'],
+        'color': colors['text'],
+        'fontWeight': 'bold',
+        'borderBottom': f'2px solid {colors["text_header"]}'
+    }
+    
+    style_cell = {
+        'backgroundColor': colors['table_cell'],
+        'color': colors['text'],
+        'textAlign': 'right',
+        'padding': '10px',
+        'fontFamily': 'Roboto, Arial, sans-serif',
+        'fontSize': '0.9em',
+        'border': f'1px solid {colors["border"]}'
+    }
+
+    return table_data, style_header, style_cell
 
 @app.callback(
     Output('live-update-graph', 'figure'),
-    [Input('chart-data-store', 'data'), Input('current-currency-store', 'data'), Input('trendline-checkboxes', 'value')],
+    [Input('chart-data-store', 'data'), Input('current-currency-store', 'data'), Input('trendline-checkboxes', 'value'), Input('theme-switch', 'value')],
     [State('coin-dropdown', 'value')]
 )
-def update_trendline_visibility(chart_data_store, currency, selected_trends, coin_symbol):
+def update_trendline_visibility(chart_data_store, currency, selected_trends, theme_value, coin_symbol):
     if chart_data_store is None: return go.Figure()
+    
+    theme = 'dark' if theme_value else 'light'
+    colors = THEMES[theme]
+    
     hist_data = chart_data_store['historical_data']
     base_price_eur = chart_data_store['base_price_eur'] 
     coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
@@ -1223,22 +1308,22 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
                 x=[times[-1]], y=[current_price_converted],
                 mode='markers',
                 name='Live Pris',
-                marker=dict(color='blue', size=10, symbol='circle', line=dict(color='white', width=2))
+                marker=dict(color='#2196f3', size=10, symbol='circle', line=dict(color='white', width=2))
             ))
 
-        figure.add_hline(y=current_price_converted, line_dash="dot", line_color="blue", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
+        figure.add_hline(y=current_price_converted, line_dash="dot", line_color="#2196f3", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
         
         slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
         if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
              trend_y = convert_currency(trend_y_eur)
-             figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='orange', width=2, dash='dot')))
+             figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
         figure.update_layout(xaxis_rangeslider_visible=False) 
 
     else:
         times = [time.strftime('%Y-%m-%d %H:%M', time.gmtime(item['time'] + 3600)) for item in hist_data]
-        figure.add_trace(go.Scatter(x=times, y=prices, mode='lines', name=f'Kurs', line=dict(color='#0056b3', width=2)))
+        figure.add_trace(go.Scatter(x=times, y=prices, mode='lines', name=f'Kurs', line=dict(color=colors['text_header'], width=2)))
 
     time_label = "1 Dag (5m)"
     if timeframe == '4h_live': time_label = f"4 Timmar ({candle_interval}m Live)"
@@ -1248,16 +1333,16 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
     if timeframe in ['1d', '4h_live']:
         high_val, low_val = max(highs) if highs else None, min(lows) if lows else None
         if high_val and high_val != current_price_converted: 
-            figure.add_hline(y=high_val, line_dash="dash", line_color="green", annotation_text="Hög", opacity=0.3)
+            figure.add_hline(y=high_val, line_dash="dash", line_color="#4caf50", annotation_text="Hög", opacity=0.3)
         if low_val and low_val != current_price_converted: 
-            figure.add_hline(y=low_val, line_dash="dash", line_color="red", annotation_text="Låg", annotation_position="bottom left", opacity=0.3)
+            figure.add_hline(y=low_val, line_dash="dash", line_color="#ef5350", annotation_text="Låg", annotation_position="bottom left", opacity=0.3)
 
     if timeframe in ['1d', '1w', '1m'] and times and prices:
         figure.add_trace(go.Scatter(
             x=[times[-1]], y=[prices[-1]],
             mode='markers',
             name='Nuvarande',
-            marker=dict(color='blue', size=8)
+            marker=dict(color='#2196f3', size=8)
         ))
 
     if timeframe == '1d':
@@ -1276,14 +1361,17 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, coi
          if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
              trend_y = convert_currency(trend_y_eur)
-             figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name=f'Trend ({timeframe})', line=dict(color='#FFD700', width=2, dash='dot')))
+             figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name=f'Trend ({timeframe})', line=dict(color='#ff9800', width=2, dash='dot')))
 
     figure.update_layout(
         title=f"Prisutveckling: {coin_label} ({time_label})", 
-        template="plotly_white", 
+        template=colors['graph_template'], 
         height=500, 
         hovermode="x unified",
-        margin=dict(r=50) 
+        margin=dict(r=50),
+        paper_bgcolor=colors['container_bg'],
+        plot_bgcolor=colors['container_bg'],
+        font={'color': colors['text']}
     )
     return figure
 

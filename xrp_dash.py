@@ -1364,7 +1364,31 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
              trend_y = convert_currency(trend_y_eur)
              figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
+# ==========================================
+    # FELSÖKNING: DUMMY-TEST (RAK LINJE)
+    # ==========================================
+    try:
+        if hist_data and len(times) > 0:
+            # Hämta första priset i listan och tvinga det till en vanlig Python-float
+            first_price = float(hist_data[0]['close'])
+            
+            # Skapa en lista med detta pris, lika lång som tidsaxeln
+            dummy_y = [first_price] * len(times)
+            
+            # Skicka in vår enkla lista i din valutaomvandlare
+            dummy_y_converted = convert_currency(dummy_y)
 
+            # Rita ut den raka linjen i grafen
+            figure.add_trace(go.Scatter(
+                x=times, 
+                y=dummy_y_converted, 
+                mode='lines', 
+                name='Dummy Test', 
+                line=dict(color='#00E676', width=4)
+            ))
+    except Exception as e:
+        print(f"DUMMY FEL: {e}")
+    # ==========================================
 
 
         figure.update_layout(xaxis_rangeslider_visible=False) 

@@ -666,12 +666,6 @@ def background_data_fetch(redis_instance):
 
 # Ny funktion börjar - Helt intryckt mot vänsterkanten!
 def background_summary_sender(redis_instance):
-
-
-
-
-
-def background_summary_sender(redis_instance):
     while True:
         try:
             now_utc = datetime.now(timezone.utc)

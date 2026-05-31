@@ -529,40 +529,77 @@ def check_and_send_alerts(alert_data, r_instance):
                         logger.info(f"Telegram Alert: {coin_symbol} {threshold}% ({period})")
 
 
-
 # ==========================================
-# NYA FUNKTIONER FÖR KÖP/SÄLJ-SIGNALER (SMA)
+# NYA FUNKTIONER FÖR KÖP/SÄLJ-SIGNALER (RSI 80/20)
 # ==========================================
-def calculate_sma(ohlc_data, period_blocks):
-    if not ohlc_data or len(ohlc_data) < period_blocks:
+def calculate_rsi(ohlc_data, periods=14):
+    """Räknar ut Relative Strength Index (RSI) med ren Python-matematik"""
+    if not ohlc_data or len(ohlc_data) < periods + 1:
         return None
-    prices = [item['close'] for item in ohlc_data[-period_blocks:]]
-    return sum(prices) / len(prices)
 
-def check_sma_crossover(coin_symbol, current_price_eur, ohlc_data, r_instance):
-    if not ohlc_data or len(ohlc_data) < 50:
-        return
-    short_sma = calculate_sma(ohlc_data, 10)
-    long_sma = calculate_sma(ohlc_data, 50)
-    if short_sma is None or long_sma is None:
-        return
+    # Hämta stängningspriserna
+    prices = [float(item['close']) for item in ohlc_data]
+    
+    gains = []
+    losses = []
+    
+    # Räkna ut prisförändringar
+    for i in range(1, len(prices)):
+        change = prices[i] - prices[i-1]
+        if change > 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(change))
+            
+    # Vi fokuserar bara på de senaste perioderna (vanligtvis 14)
+    gains = gains[-periods:]
+    losses = losses[-periods:]
+    
+    avg_gain = sum(gains) / periods
+    avg_loss = sum(losses) / periods
+    
+    if avg_loss == 0:
+        return 100.0 # Priset har bara gått upp, RSI slår i taket
         
-    state_key = f"sma_state:{coin_symbol}"
+    rs = avg_gain / avg_loss
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return round(rsi, 2)
+
+def check_rsi_alerts(coin_symbol, current_price_eur, ohlc_data, r_instance):
+    """Kollar om valutan är överköpt (>80) eller översåld (<20)"""
+    rsi_value = calculate_rsi(ohlc_data, periods=14)
+    if rsi_value is None:
+        return
+
+    state_key = f"rsi_state:{coin_symbol}"
     previous_state = r_instance.get(state_key) if r_instance else None
     if previous_state:
         previous_state = previous_state.decode('utf-8')
+    
+    # Bestäm nuvarande tillstånd baserat på dina 80/20-gränser
+    current_state = "neutral"
+    if rsi_value >= 80:
+        current_state = "overbought"
+    elif rsi_value <= 20:
+        current_state = "oversold"
         
-    current_state = "bullish" if short_sma > long_sma else "bearish"
-    
-    if previous_state and previous_state != current_state:
+    # Larma BARA om vi går från neutral/motsatt in i en NY extrem-zon
+    if previous_state != current_state:
         coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
-        if current_state == "bullish":
-            msg = f"🟢 **KÖPSIGNAL (SMA Crossover)** 🟢\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nTrend: *Kort SMA (10) korsade nyss Lång SMA (50) uppåt.*"
-        else:
-            msg = f"🔴 **SÄLJSIGNAL (SMA Crossover)** 🔴\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nTrend: *Kort SMA (10) korsade nyss Lång SMA (50) nedåt.*"
-        send_telegram_message(msg)
-        logger.info(f"SMA Alert skickad: {coin_symbol} {current_state}")
+        
+        if current_state == "oversold":
+            msg = f"🟢 **KÖPSIGNAL (RSI)** 🟢\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nStatus: *Översåld (RSI: {rsi_value})* - Priset har fallit kraftigt och en vändning uppåt är möjlig."
+            send_telegram_message(msg)
+            logger.info(f"RSI Alert skickad: {coin_symbol} KÖP (RSI {rsi_value})")
+            
+        elif current_state == "overbought":
+            msg = f"🔴 **SÄLJSIGNAL (RSI)** 🔴\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nStatus: *Överköpt (RSI: {rsi_value})* - Priset har rusat kraftigt och en rekyl nedåt är möjlig."
+            send_telegram_message(msg)
+            logger.info(f"RSI Alert skickad: {coin_symbol} SÄLJ (RSI {rsi_value})")
     
+    # Spara tillståndet så vi inte larmar igen förrän trenden ändras
     if r_instance:
         r_instance.set(state_key, current_state)
 # ==========================================
@@ -615,81 +652,10 @@ def background_data_fetch(redis_instance):
                     if ohlc_5min_data:
                          redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
 
-# Aktivera vår Köp/Sälj-algoritm live
-                         check_sma_crossover(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
-                    periods_ago_1y = 365 * 86400 * 1.1 
-                    ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_1y) 
-                    if ohlc_1day_data:
-                         redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
-                         
-                    # Hämta 15min data som grund för Live-vyn 
-                    # Vi cachear detta som standard, om användaren väljer 30m/1h hämtas det direkt i callback
-                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 12)
-                    if ohlc_live_view:
-                        redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
-                
-                else:
-                    cached_5min = redis_instance.get(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}')
-                    ohlc_5min_data = json.loads(cached_5min) if cached_5min else []
-                    
-                    cached_1day = redis_instance.get(f'OHLC_1DAY_{ticker}')
-                    ohlc_1day_data = json.loads(cached_1day) if cached_1day else []
+# Aktivera vår RSI Köp/Sälj-algoritm live
+                        check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
-                if fetch_extra_intervals:
-                    ohlc_1week_data = fetch_ohlc_data_from_kraken(ticker, 15, 7 * 86400)
-                    if ohlc_1week_data:
-                        redis_instance.set(f'OHLC_1WEEK_{ticker}', json.dumps(ohlc_1week_data), ex=3600)
-                    
-                    ohlc_1month_data = fetch_ohlc_data_from_kraken(ticker, 60, 30 * 86400)
-                    if ohlc_1month_data:
-                        redis_instance.set(f'OHLC_1MONTH_{ticker}', json.dumps(ohlc_1month_data), ex=7200)
-
-                trade_value_int = None
-                if ohlc_5min_data and ohlc_1day_data:
-                    hist_5min_current = ohlc_5min_data.copy()
-                    hist_5min_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
-                    hist_1day_current = ohlc_1day_data.copy()
-                    hist_1day_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
-                    
-                    trade_value, _ = calculate_trade_value(hist_5min_current, current_price_eur, hist_1day_current)
-                    if trade_value is not None:
-                        trade_value_int = int(round(trade_value))
-                
-                if ohlc_5min_data:
-                    prices_eur = [item['price'] for item in ohlc_5min_data]
-                    if prices_eur:
-                        current_high = max(max(prices_eur), current_price_eur)
-                        current_low = min(min(prices_eur), current_price_eur)
-                        all_24h_range_ohlc[coin_symbol] = {'high_eur': current_high, 'low_eur': current_low}
-
-                    short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
-                    percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
-                else:
-                    percent_changes = {}
-
-                long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
-                long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
-                
-                percent_changes.update(long_term_changes) 
-                all_percent_changes[coin_symbol] = percent_changes
-                alert_data_for_sending[coin_symbol] = {'changes': percent_changes, 'price_eur': current_price_eur}
-                trade_value_alert_data[coin_symbol] = {'trade_value': trade_value_int, 'price_eur': current_price_eur}
-            
-            if redis_instance:
-                check_and_send_alerts(alert_data_for_sending, redis_instance)
-                check_and_send_trade_value_alerts(trade_value_alert_data, redis_instance) 
-                
-                new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
-                new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc 
-                
-                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_INTERVAL_FAST + 60)
-                logger.debug("✅ Snabb uppdatering sparad (10s).")
-            
-            time.sleep(max(0, UPDATE_INTERVAL_FAST - (time.time() - cycle_start_time)))
-        except Exception as e:
-            logger.error(f"❌ Fel i bakgrundstråd: {e}")
-            time.sleep(30)
 
 def background_summary_sender(redis_instance):
     while True:
@@ -1364,52 +1330,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
              trend_y = convert_currency(trend_y_eur)
              figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
-# ==========================================
-    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (FÖRBÄTTRAD DATA-KONTROLL)
-    # ==========================================
-    try:
-        if hist_data and len(times) > 0:
-            # 1. Hämta alla priser och tvinga till rena Python-siffror
-            raw_prices = [float(item['close']) for item in hist_data]
-            
-            # 2. Konvertera valutan DIREKT innan vi gör något annat
-            prices_converted = convert_currency(raw_prices)
-            
-            # 3. Bygg X- och Y-koordinater
-            x_short = []
-            y_short = []
-            # Om vi har minst 10 punkter, rita korta (Gröna) linjen
-            if len(prices_converted) >= 10:
-                for i in range(9, len(prices_converted)):
-                    avg = sum(prices_converted[i-9 : i+1]) / 10.0
-                    x_short.append(times[i])
-                    y_short.append(avg)
-                    
-            x_long = []
-            y_long = []
-            # Om vi har minst 50 punkter, rita långa (Röda) linjen
-            if len(prices_converted) >= 50:
-                for i in range(49, len(prices_converted)):
-                    avg = sum(prices_converted[i-49 : i+1]) / 50.0
-                    x_long.append(times[i])
-                    y_long.append(avg)
-
-            # 4. Rita linjerna!
-            if x_short and y_short:
-                figure.add_trace(go.Scatter(
-                    x=x_short, y=y_short, mode='lines', 
-                    name='Kort SMA (10)', line=dict(color='#00E676', width=2)
-                ))
-            if x_long and y_long:
-                figure.add_trace(go.Scatter(
-                    x=x_long, y=y_long, mode='lines', 
-                    name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
-                ))
-    except Exception as e:
-        import traceback
-        print(f"SMA RIT-FEL: {e}")
-        print(traceback.format_exc())
-    # ==========================================
 
 
         figure.update_layout(xaxis_rangeslider_visible=False) 

@@ -616,7 +616,7 @@ def background_data_fetch(redis_instance):
                          redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
 
 # Aktivera vår Köp/Sälj-algoritm live
-                        check_sma_crossover(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
+                         check_sma_crossover(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
                     periods_ago_1y = 365 * 86400 * 1.1 
                     ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_1y) 

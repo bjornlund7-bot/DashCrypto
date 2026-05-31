@@ -1396,7 +1396,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
         ))
     # ==========================================
 
-
         figure.update_layout(xaxis_rangeslider_visible=False) 
 
     else:

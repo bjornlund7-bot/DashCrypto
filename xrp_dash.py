@@ -1365,46 +1365,6 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
              figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
 
-# ==========================================
-    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (BOMBSÄKER METOD)
-    # ==========================================
-    try:
-        import pandas as pd
-        if hist_data and len(hist_data) >= 50:
-            # 1. Hämta alla priser och konvertera till EUR först
-            raw_prices = [float(item['close']) for item in hist_data]
-            prices_eur = convert_currency(raw_prices)
-            
-            # 2. Använd Pandas för smidig uträkning
-            s_prices = pd.Series(prices_eur)
-            sma_short = s_prices.rolling(10).mean()
-            sma_long = s_prices.rolling(50).mean()
-
-            # 3. Klipp bort alla tomrum! Bygg listor BARA med riktiga värden
-            x_short = []
-            y_short = []
-            for i, val in enumerate(sma_short):
-                if pd.notna(val): # Om värdet är en giltig siffra
-                    x_short.append(times[i])
-                    y_short.append(val)
-                    
-            x_long = []
-            y_long = []
-            for i, val in enumerate(sma_long):
-                if pd.notna(val): # Om värdet är en giltig siffra
-                    x_long.append(times[i])
-                    y_long.append(val)
-
-            # 4. Rita linjerna (nu innehåller de garanterat inga buggiga tomrum)
-            if x_short and y_short:
-                figure.add_trace(go.Scatter(x=x_short, y=y_short, mode='lines', name='Kort SMA (10)', line=dict(color='#00E676', width=2)))
-            if x_long and y_long:
-                figure.add_trace(go.Scatter(x=x_long, y=y_long, mode='lines', name='Lång SMA (50)', line=dict(color='#FF1744', width=2)))
-    except Exception as e:
-        import traceback
-        print(f"SMA RIT-FEL: {e}")
-        print(traceback.format_exc())
-    # ==========================================
 
 
         figure.update_layout(xaxis_rangeslider_visible=False) 

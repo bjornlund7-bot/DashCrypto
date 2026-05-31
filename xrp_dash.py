@@ -651,9 +651,9 @@ def background_data_fetch(redis_instance):
                     ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                     if ohlc_5min_data:
                          redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
+                         
+                         check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
-# Aktivera vår RSI Köp/Sälj-algoritm live
-                        check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
         # Här stänger vi try-blocket (backa tillbaka ut mot vänster)
         except Exception as e:

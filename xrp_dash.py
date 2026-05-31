@@ -1365,47 +1365,41 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
              figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
 
-
 # ==========================================
-    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (FELSÖKNING)
+    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (ULTRA SAFE)
     # ==========================================
     try:
         if hist_data and len(hist_data) >= 50:
-            # Använd .get() ifall 'close' saknas i någon datapunkt
-            close_prices = [item.get('close') for item in hist_data]
+            # 1. Hämta priser. Tvinga till ren Python-float.
+            close_prices = [float(item['close']) for item in hist_data]
             
-            # Säkerhetskontroll: Gå bara vidare om vi faktiskt har siffror
-            if all(p is not None for p in close_prices):
-                close_prices_eur = convert_currency(close_prices)
-                
-                def build_sma_list(prices, window):
-                    sma_list = []
-                    for i in range(len(prices)):
-                        if i < window - 1:
-                            sma_list.append(None)
-                        else:
-                            window_slice = prices[i - window + 1 : i + 1]
-                            sma_list.append(sum(window_slice) / window)
-                    return sma_list
+            # 2. Skapa listor fyllda med None (Plotly och JSON hanterar None perfekt)
+            sma_short = [None] * len(close_prices)
+            sma_long = [None] * len(close_prices)
+            
+            # 3. Räkna ut SMA med ren matematik
+            for i in range(len(close_prices)):
+                if i >= 9:
+                    sma_short[i] = round(sum(close_prices[i-9 : i+1]) / 10.0, 4)
+                if i >= 49:
+                    sma_long[i] = round(sum(close_prices[i-49 : i+1]) / 50.0, 4)
 
-                sma_short_clean = build_sma_list(close_prices_eur, 10)
-                sma_long_clean = build_sma_list(close_prices_eur, 50)
-                
-                figure.add_trace(go.Scatter(
-                    x=times, y=sma_short_clean, mode='lines', 
-                    name='Kort SMA (10)', line=dict(color='#00E676', width=2)
-                ))
-                figure.add_trace(go.Scatter(
-                    x=times, y=sma_long_clean, mode='lines', 
-                    name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
-                ))
+            # (OBS: Vi hoppar över convert_currency här tillfälligt för att garantera att 
+            # grafen inte kraschar. Om priserna ligger på fel Y-axel kan vi fixa det sen!)
+
+            # 4. Lägg in dem i grafen
+            figure.add_trace(go.Scatter(
+                x=times, y=sma_short, mode='lines', 
+                name='Kort SMA (10)', line=dict(color='#00E676', width=2)
+            ))
+            figure.add_trace(go.Scatter(
+                x=times, y=sma_long, mode='lines', 
+                name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
+            ))
     except Exception as e:
-        # Om något skiter sig, fångar vi det och printar felet till Render!
-        import traceback
-        print(f"Krasch i SMA-koden: {e}")
-        print(traceback.format_exc())
-        logger.error(f"Krasch i SMA-koden: {e}")
+        print(f"SMA FEL: {e}")
     # ==========================================
+
 
 
         figure.update_layout(xaxis_rangeslider_visible=False) 

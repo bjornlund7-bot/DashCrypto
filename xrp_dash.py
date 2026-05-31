@@ -1365,36 +1365,48 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
              figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
 
-# ==========================================
-    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN
-    # ==========================================
-    import pandas as pd
-    import math
 
-    if len(hist_data) >= 50:
-        close_prices = [item['close'] for item in hist_data]
-        
-        # 1. Konvertera priserna TILL EUR FÖRST
-        close_prices_eur = convert_currency(close_prices)
-        price_series = pd.Series(close_prices_eur)
-        
-        # 2. Räkna ut SMA på EUR-priserna
-        sma_short = price_series.rolling(window=10).mean().tolist()
-        sma_long = price_series.rolling(window=50).mean().tolist()
-        
-        # 3. Rensa bort "NaN" så att grafen inte kraschar (Plotly vill ha None)
-        sma_short_clean = [val if not math.isnan(val) else None for val in sma_short]
-        sma_long_clean = [val if not math.isnan(val) else None for val in sma_long]
-        
-        figure.add_trace(go.Scatter(
-            x=times, y=sma_short_clean, mode='lines', 
-            name='Kort SMA (10)', line=dict(color='#00E676', width=2)
-        ))
-        figure.add_trace(go.Scatter(
-            x=times, y=sma_long_clean, mode='lines', 
-            name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
-        ))
+# ==========================================
+    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (FELSÖKNING)
     # ==========================================
+    try:
+        if hist_data and len(hist_data) >= 50:
+            # Använd .get() ifall 'close' saknas i någon datapunkt
+            close_prices = [item.get('close') for item in hist_data]
+            
+            # Säkerhetskontroll: Gå bara vidare om vi faktiskt har siffror
+            if all(p is not None for p in close_prices):
+                close_prices_eur = convert_currency(close_prices)
+                
+                def build_sma_list(prices, window):
+                    sma_list = []
+                    for i in range(len(prices)):
+                        if i < window - 1:
+                            sma_list.append(None)
+                        else:
+                            window_slice = prices[i - window + 1 : i + 1]
+                            sma_list.append(sum(window_slice) / window)
+                    return sma_list
+
+                sma_short_clean = build_sma_list(close_prices_eur, 10)
+                sma_long_clean = build_sma_list(close_prices_eur, 50)
+                
+                figure.add_trace(go.Scatter(
+                    x=times, y=sma_short_clean, mode='lines', 
+                    name='Kort SMA (10)', line=dict(color='#00E676', width=2)
+                ))
+                figure.add_trace(go.Scatter(
+                    x=times, y=sma_long_clean, mode='lines', 
+                    name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
+                ))
+    except Exception as e:
+        # Om något skiter sig, fångar vi det och printar felet till Render!
+        import traceback
+        print(f"Krasch i SMA-koden: {e}")
+        print(traceback.format_exc())
+        logger.error(f"Krasch i SMA-koden: {e}")
+    # ==========================================
+
 
         figure.update_layout(xaxis_rangeslider_visible=False) 
 

@@ -654,7 +654,7 @@ def background_data_fetch(redis_instance):
 
 
 # Aktivera vår RSI Köp/Sälj-algoritm live
-                        check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
+                         check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
 
 def background_summary_sender(redis_instance):

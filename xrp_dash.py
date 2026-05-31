@@ -652,9 +652,23 @@ def background_data_fetch(redis_instance):
                     if ohlc_5min_data:
                          redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
 
-
 # Aktivera vår RSI Köp/Sälj-algoritm live
-                         check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
+                        check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
+
+        # Här stänger vi try-blocket (backa tillbaka ut mot vänster)
+        except Exception as e:
+            # Här flyttar vi in ETT steg för att berätta vad som ska göras vid fel
+            logger.error(f"Ett fel uppstod i bakgrundstråden: {e}")
+        
+        # Samma nivå som except
+        import time
+        time.sleep(60)
+
+# Ny funktion börjar - Helt intryckt mot vänsterkanten!
+def background_summary_sender(redis_instance):
+
+
+
 
 
 def background_summary_sender(redis_instance):

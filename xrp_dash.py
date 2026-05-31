@@ -1369,23 +1369,32 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
     # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN
     # ==========================================
     import pandas as pd
+    import math
+
     if len(hist_data) >= 50:
         close_prices = [item['close'] for item in hist_data]
-        price_series = pd.Series(close_prices)
         
+        # 1. Konvertera priserna TILL EUR FÖRST
+        close_prices_eur = convert_currency(close_prices)
+        price_series = pd.Series(close_prices_eur)
+        
+        # 2. Räkna ut SMA på EUR-priserna
         sma_short = price_series.rolling(window=10).mean().tolist()
         sma_long = price_series.rolling(window=50).mean().tolist()
         
+        # 3. Rensa bort "NaN" så att grafen inte kraschar (Plotly vill ha None)
+        sma_short_clean = [val if not math.isnan(val) else None for val in sma_short]
+        sma_long_clean = [val if not math.isnan(val) else None for val in sma_long]
+        
         figure.add_trace(go.Scatter(
-            x=times, y=convert_currency(sma_short), mode='lines', 
+            x=times, y=sma_short_clean, mode='lines', 
             name='Kort SMA (10)', line=dict(color='#00E676', width=2)
         ))
         figure.add_trace(go.Scatter(
-            x=times, y=convert_currency(sma_long), mode='lines', 
+            x=times, y=sma_long_clean, mode='lines', 
             name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
         ))
     # ==========================================
-
 
 
         figure.update_layout(xaxis_rangeslider_visible=False) 

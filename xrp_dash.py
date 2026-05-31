@@ -1366,40 +1366,45 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
 
 
 # ==========================================
-    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (ULTRA SAFE)
+    # RITA UT KÖP/SÄLJ-LINJERNA I GRAFEN (BOMBSÄKER METOD)
     # ==========================================
     try:
+        import pandas as pd
         if hist_data and len(hist_data) >= 50:
-            # 1. Hämta priser. Tvinga till ren Python-float.
-            close_prices = [float(item['close']) for item in hist_data]
+            # 1. Hämta alla priser och konvertera till EUR först
+            raw_prices = [float(item['close']) for item in hist_data]
+            prices_eur = convert_currency(raw_prices)
             
-            # 2. Skapa listor fyllda med None (Plotly och JSON hanterar None perfekt)
-            sma_short = [None] * len(close_prices)
-            sma_long = [None] * len(close_prices)
-            
-            # 3. Räkna ut SMA med ren matematik
-            for i in range(len(close_prices)):
-                if i >= 9:
-                    sma_short[i] = round(sum(close_prices[i-9 : i+1]) / 10.0, 4)
-                if i >= 49:
-                    sma_long[i] = round(sum(close_prices[i-49 : i+1]) / 50.0, 4)
+            # 2. Använd Pandas för smidig uträkning
+            s_prices = pd.Series(prices_eur)
+            sma_short = s_prices.rolling(10).mean()
+            sma_long = s_prices.rolling(50).mean()
 
-            # (OBS: Vi hoppar över convert_currency här tillfälligt för att garantera att 
-            # grafen inte kraschar. Om priserna ligger på fel Y-axel kan vi fixa det sen!)
+            # 3. Klipp bort alla tomrum! Bygg listor BARA med riktiga värden
+            x_short = []
+            y_short = []
+            for i, val in enumerate(sma_short):
+                if pd.notna(val): # Om värdet är en giltig siffra
+                    x_short.append(times[i])
+                    y_short.append(val)
+                    
+            x_long = []
+            y_long = []
+            for i, val in enumerate(sma_long):
+                if pd.notna(val): # Om värdet är en giltig siffra
+                    x_long.append(times[i])
+                    y_long.append(val)
 
-            # 4. Lägg in dem i grafen
-            figure.add_trace(go.Scatter(
-                x=times, y=sma_short, mode='lines', 
-                name='Kort SMA (10)', line=dict(color='#00E676', width=2)
-            ))
-            figure.add_trace(go.Scatter(
-                x=times, y=sma_long, mode='lines', 
-                name='Lång SMA (50)', line=dict(color='#FF1744', width=2)
-            ))
+            # 4. Rita linjerna (nu innehåller de garanterat inga buggiga tomrum)
+            if x_short and y_short:
+                figure.add_trace(go.Scatter(x=x_short, y=y_short, mode='lines', name='Kort SMA (10)', line=dict(color='#00E676', width=2)))
+            if x_long and y_long:
+                figure.add_trace(go.Scatter(x=x_long, y=y_long, mode='lines', name='Lång SMA (50)', line=dict(color='#FF1744', width=2)))
     except Exception as e:
-        print(f"SMA FEL: {e}")
+        import traceback
+        print(f"SMA RIT-FEL: {e}")
+        print(traceback.format_exc())
     # ==========================================
-
 
 
         figure.update_layout(xaxis_rangeslider_visible=False) 

@@ -942,7 +942,7 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      )
                 ])
             ]),
-            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
+            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', figure={}, config={'displayModeBar': False})]),
         ]),
         
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[

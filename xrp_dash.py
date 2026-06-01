@@ -871,7 +871,7 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
             html.Div([
                 dcc.Checklist(
                     id='theme-switch',
-                    options=[{'label': ' Dark Mode', 'value': 'dark'}],
+                    options={'dark': ' Dark Mode'},
                     value=[],
                     inline=True,
                     inputStyle={"margin-right": "5px"}
@@ -884,11 +884,11 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                 html.H3('⚙️ Kontroller', id='controls-header', style={'fontSize': '1.3em', 'marginBottom': '15px'}),
                 html.Div(style={'marginBottom': '20px'}, children=[
                     html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'display': 'block'}),
-                    dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_COIN_SYMBOL, clearable=False),
+                    dcc.Dropdown(id='coin-dropdown', options={label.split(' ')[0]: label for label in COINS_LABELS}, value=DEFAULT_COIN_SYMBOL, clearable=False),
                 ]),
                 html.Div(children=[
                     html.Label("Välj basvaluta/krypto:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'display': 'block'}),
-                    dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in BASE_CURRENCIES], value='EUR', clearable=False),
+                    dcc.Dropdown(id='currency-dropdown', options={c: f'{c} ({c})' for c in BASE_CURRENCIES}, value='EUR', clearable=False),
                 ]),
             ]),
             html.Div(style={'flex': '1 1 600px', 'minWidth': '600px'}, children=[
@@ -906,7 +906,7 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'marginRight': '15px', 'fontSize': '0.9em'}),
                      dcc.Checklist(
                          id='trendline-checkboxes',
-                         options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items() if config.get('show_line')],
+                         options={key: config['name'].split(' ')[1].replace('(', '').replace(')', '') for key, config in TREND_WINDOWS.items() if config.get('show_line')},
                          value=[k for k, v in TREND_WINDOWS.items() if v.get('show_line')], 
                          inline=True,
                          style={'display': 'inline-block'}
@@ -916,31 +916,22 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      html.Label("Candle (Live):", style={'fontWeight': 'bold', 'marginRight': '5px', 'fontSize': '0.9em'}),
                      dcc.Dropdown(
                         id='live-candle-interval',
-                        options=[
-                            {'label': '15 min', 'value': 15},
-                            {'label': '30 min', 'value': 30},
-                            {'label': '1 timme', 'value': 60}
-                        ],
-                        value=15,
+                        options={'15': '15 min', '30': '30 min', '60': '1 timme'},
+                        value='15',
                         clearable=False,
                         style={'width': '100px', 'marginRight': '20px'}
                      ),
                      html.Label("Graf Tidsintervall:", style={'fontWeight': 'bold', 'marginRight': '10px', 'fontSize': '0.9em'}),
                      dcc.RadioItems(
                         id='graph-timeframe',
-                        options=[
-                            {'label': ' 4 Timmar (Live)', 'value': '4h_live'},
-                            {'label': ' 1 Dag (5m)', 'value': '1d'},
-                            {'label': ' 1 Vecka (15m)', 'value': '1w'},
-                            {'label': ' 1 Månad (60m)', 'value': '1m'}
-                        ],
+                        options={'4h_live': ' 4 Timmar (Live)', '1d': ' 1 Dag (5m)', '1w': ' 1 Vecka (15m)', '1m': ' 1 Månad (60m)'},
                         value='1d',
                         inline=True,
                         labelStyle={'marginRight': '15px', 'cursor': 'pointer'}
                      )
                 ])
             ]),
-            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
+            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', figure={}, config={'displayModeBar': False})]),
         ]),
         
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
@@ -997,8 +988,8 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
         
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
-            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}), # Textfärg tvingad till svart här
-            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ # Textfärg tvingad till svart här
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}), 
+            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ 
                 html.Div([
                     html.P('**Prisrörelser (%):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0 0 5px 0'}),
                     html.Ul([html.Li(f'+{t}%' if t > 0 else f'{t}%') for t in ALERT_THRESHOLDS_UP[::-1] + ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
@@ -1015,6 +1006,9 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
     dcc.Interval(id='interval-fast', interval=UPDATE_INTERVAL_FAST*1000, n_intervals=0),
     dcc.Interval(id='interval-slow', interval=UPDATE_INTERVAL_SLOW*1000, n_intervals=0)
 ])
+
+
+
 
 # --- Callbacks ---
 

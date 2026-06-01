@@ -1329,15 +1329,17 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
                 marker=dict(color='#2196f3', size=10, symbol='circle', line=dict(color='white', width=2))
             ))
 
-        figure.add_hline(y=current_price_converted, line_dash="dot", line_color="#2196f3", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
+        
+
+
+figure.add_hline(y=current_price_converted, line_dash="dot", line_color="#2196f3", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
         
         slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
         if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
              trend_y = convert_currency(trend_y_eur)
-             figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
-
-
+             trend_y_safe = [float(val) for val in trend_y]
+             figure.add_trace(go.Scatter(x=times, y=trend_y_safe, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
         figure.update_layout(xaxis_rangeslider_visible=False) 
 
@@ -1374,14 +1376,16 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
                 slope, intercept, start_idx = calculate_trendline(hist_data, config['blocks'])
                 trend_y_eur = slope * np.arange(config['blocks']) + intercept
                 trend_y = convert_currency(trend_y_eur)
-                figure.add_trace(go.Scatter(x=times[start_idx:], y=trend_y, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash')))
+                trend_y_safe = [float(val) for val in trend_y]
+                figure.add_trace(go.Scatter(x=times[start_idx:], y=trend_y_safe, mode='lines', name=config['name'], line=dict(color=config['color'], width=2, dash='dash')))
     
     elif timeframe in ['1w', '1m']:
          slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
          if slope is not None:
              trend_y_eur = slope * np.arange(len(hist_data)) + intercept
              trend_y = convert_currency(trend_y_eur)
-             figure.add_trace(go.Scatter(x=times, y=trend_y, mode='lines', name=f'Trend ({timeframe})', line=dict(color='#ff9800', width=2, dash='dot')))
+             trend_y_safe = [float(val) for val in trend_y]
+             figure.add_trace(go.Scatter(x=times, y=trend_y_safe, mode='lines', name=f'Trend ({timeframe})', line=dict(color='#ff9800', width=2, dash='dot')))
 
     figure.update_layout(
         title=f"Prisutveckling: {coin_label} ({time_label})", 
@@ -1394,6 +1398,11 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
         font={'color': colors['text']}
     )
     return figure
+
+
+
+
+
 
 # Uppdaterad Callback för att välja valuta via tabell-klick
 @app.callback(

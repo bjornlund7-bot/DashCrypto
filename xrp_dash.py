@@ -580,9 +580,9 @@ def check_rsi_alerts(coin_symbol, current_price_eur, ohlc_data, r_instance):
     
     # Bestäm nuvarande tillstånd baserat på dina 80/20-gränser
     current_state = "neutral"
-    if rsi_value >= 80:
+    if rsi_value >= 75:
         current_state = "overbought"
-    elif rsi_value <= 20:
+    elif rsi_value <= 25:
         current_state = "oversold"
         
     # Larma BARA om vi går från neutral/motsatt in i en NY extrem-zon

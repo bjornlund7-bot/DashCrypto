@@ -1333,13 +1333,13 @@ def update_trendline_visibility(chart_data_store, currency, selected_trends, the
 
 
 figure.add_hline(y=current_price_converted, line_dash="dot", line_color="#2196f3", opacity=0.5, annotation_text=f" Live: {format_price_display(current_price_converted)}", annotation_position="right")
-        
+
         slope, intercept, start_idx = calculate_trendline(hist_data, len(hist_data))
         if slope is not None:
-             trend_y_eur = slope * np.arange(len(hist_data)) + intercept
-             trend_y = convert_currency(trend_y_eur)
-             trend_y_safe = [float(val) for val in trend_y]
-             figure.add_trace(go.Scatter(x=times, y=trend_y_safe, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
+            trend_y_eur = slope * np.arange(len(hist_data)) + intercept
+            trend_y = convert_currency(trend_y_eur)
+            trend_y_safe = [float(val) for val in trend_y]
+            figure.add_trace(go.Scatter(x=times, y=trend_y_safe, mode='lines', name='Trend (4h)', line=dict(color='#ff9800', width=2, dash='dot')))
 
         figure.update_layout(xaxis_rangeslider_visible=False) 
 

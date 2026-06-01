@@ -252,41 +252,60 @@ def calculate_trade_value(short_term_data, current_price_eur, long_term_data=Non
 
 
 
-def check_rmi_alerts(symbol, rmi_value):
+def check_rsi_alerts(label, rsi_value, price_eur):
     """
-    RMI-Larm: Skickar Telegram endast vid inträde i zon 25 eller 75.
+    RSI-Larm: Skickar Telegram endast vid inträde i zon 25 eller 75.
+    Formaterad exakt enligt KÖP/SÄLJ-mallen.
     """
-    if r is None or rmi_value is None: 
-        return # Om Redis saknas eller värdet är ogiltigt avbryter vi
+    if r is None or rsi_value is None or price_eur is None: 
+        return
     
-    alert_key = f"rmi_last_zone_{symbol}"
+    # Plocka ut kortnamnet (t.ex. MYX) för Redis-minnet
+    symbol_short = label.split(' ')[0] 
+    alert_key = f"rsi_last_zone_{symbol_short}"
+    
     last_zone = r.get(alert_key)
     last_zone = last_zone.decode('utf-8') if last_zone else "NEUTRAL"
     
     current_zone = "NEUTRAL"
-    if rmi_value <= 25:
-        current_zone = "ZON 25 (Låg)"
-    elif rmi_value >= 75:
-        current_zone = "ZON 75 (Hög)"
+    telegram_message = ""
+    
+    # Formatera priset med 4 decimaler (ex: 0,2400)
+    price_str = f"{price_eur:.4f}".replace(".", ",")
+    
+    # KÖPSIGNAL (<= 20)
+    if rsi_value <= 20:
+        current_zone = "KÖP"
+        telegram_message = (
+            f"🟢 KÖPSIGNAL (RSI) 🟢\n"
+            f"Valuta: {label}\n"
+            f"Pris: {price_str} EUR\n"
+            f"Status: Översåld (RSI: {rsi_value:.1f}) - Priset har fallit kraftigt och en vändning uppåt är möjlig."
+        )
+    # SÄLJSIGNAL (>= 80)
+    elif rsi_value >= 80:
+        current_zone = "SÄLJ"
+        telegram_message = (
+            f"🔴 SÄLJSIGNAL (RSI) 🔴\n"
+            f"Valuta: {label}\n"
+            f"Pris: {price_str} EUR\n"
+            f"Status: Överköpt (RSI: {rsi_value:.1f}) - Priset har rusat kraftigt och en rekyl nedåt är möjlig."
+        )
 
-    # Larm logik: Skicka ENDAST om vi byter från NEUTRAL till en larm-zon
+    # Skicka ENDAST om vi byter från NEUTRAL till en larm-zon
     if current_zone != "NEUTRAL" and current_zone != last_zone:
-        message = f"🚨 RMI Alert för {symbol}!\nVärde: {rmi_value:.2f}\nZon: {current_zone}"
-        
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message}, timeout=10)
-            r.set(alert_key, current_zone) # Spara i Redis att vi nu är i zonen
-            logger.info(f"RMI-larm skickat för {symbol}: {current_zone}")
+            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': telegram_message}, timeout=10)
+            r.set(alert_key, current_zone) # Spara i minnet
+            logger.info(f"RSI-larm skickat för {symbol_short}")
         except Exception as e:
-            logger.error(f"Kunde inte skicka RMI-larm: {e}")
+            logger.error(f"Kunde inte skicka RSI-larm: {e}")
             
-    # Återställ: Om vi lämnar zonen, nollställ så vi kan få larm igen nästa gång
+    # Återställ om vi lämnar zonen
     elif current_zone == "NEUTRAL" and last_zone != "NEUTRAL":
         r.set(alert_key, "NEUTRAL")
-        logger.info(f"RMI återgick till neutral för {symbol}")
-
-
+        logger.info(f"RSI återgick till neutral för {symbol_short}")
 
 
 
@@ -1250,7 +1269,7 @@ def update_table_slow(n, currency, theme_value):
             if tv_val is not None: 
                 tv_int = int(round(tv_val))
                 # ---> RMI LARM AKTIVERAS HÄR <---
-                check_rmi_alerts(sl, tv_val)
+                check_rsi_alerts(label, tv_val, pe)
         
         pb = pe
         if currency == 'SEK': pb = pe * eur_to_sek if pe else None

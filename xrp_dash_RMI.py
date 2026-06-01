@@ -528,6 +528,85 @@ def check_and_send_alerts(alert_data, r_instance):
                         send_telegram_message(msg)
                         logger.info(f"Telegram Alert: {coin_symbol} {threshold}% ({period})")
 
+
+# ==========================================
+# NYA FUNKTIONER FÖR KÖP/SÄLJ-SIGNALER (RSI 80/20)
+# ==========================================
+def calculate_rsi(ohlc_data, periods=14):
+    """Räknar ut Relative Strength Index (RSI) med ren Python-matematik"""
+    if not ohlc_data or len(ohlc_data) < periods + 1:
+        return None
+
+    # Hämta stängningspriserna
+    prices = [float(item['close']) for item in ohlc_data]
+    
+    gains = []
+    losses = []
+    
+    # Räkna ut prisförändringar
+    for i in range(1, len(prices)):
+        change = prices[i] - prices[i-1]
+        if change > 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(change))
+            
+    # Vi fokuserar bara på de senaste perioderna (vanligtvis 14)
+    gains = gains[-periods:]
+    losses = losses[-periods:]
+    
+    avg_gain = sum(gains) / periods
+    avg_loss = sum(losses) / periods
+    
+    if avg_loss == 0:
+        return 100.0 # Priset har bara gått upp, RSI slår i taket
+        
+    rs = avg_gain / avg_loss
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return round(rsi, 2)
+
+def check_rsi_alerts(coin_symbol, current_price_eur, ohlc_data, r_instance):
+    """Kollar om valutan är överköpt (>80) eller översåld (<20)"""
+    rsi_value = calculate_rsi(ohlc_data, periods=14)
+    if rsi_value is None:
+        return
+
+    state_key = f"rsi_state:{coin_symbol}"
+    previous_state = r_instance.get(state_key) if r_instance else None
+    if previous_state:
+        previous_state = previous_state.decode('utf-8')
+    
+    # Bestäm nuvarande tillstånd baserat på dina 80/20-gränser
+    current_state = "neutral"
+    if rsi_value >= 75:
+        current_state = "overbought"
+    elif rsi_value <= 25:
+        current_state = "oversold"
+        
+    # Larma BARA om vi går från neutral/motsatt in i en NY extrem-zon
+    if previous_state != current_state:
+        coin_label = SYMBOL_TO_LABEL.get(coin_symbol, coin_symbol)
+        
+        if current_state == "oversold":
+            msg = f"🟢 **KÖPSIGNAL (RSI)** 🟢\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nStatus: *Översåld (RSI: {rsi_value})* - Priset har fallit kraftigt och en vändning uppåt är möjlig."
+            send_telegram_message(msg)
+            logger.info(f"RSI Alert skickad: {coin_symbol} KÖP (RSI {rsi_value})")
+            
+        elif current_state == "overbought":
+            msg = f"🔴 **SÄLJSIGNAL (RSI)** 🔴\nValuta: *{coin_label}*\nPris: *{format_price_telegram(current_price_eur)} EUR*\nStatus: *Överköpt (RSI: {rsi_value})* - Priset har rusat kraftigt och en rekyl nedåt är möjlig."
+            send_telegram_message(msg)
+            logger.info(f"RSI Alert skickad: {coin_symbol} SÄLJ (RSI {rsi_value})")
+    
+    # Spara tillståndet så vi inte larmar igen förrän trenden ändras
+    if r_instance:
+        r_instance.set(state_key, current_state)
+# ==========================================
+
+
+
+
 # --- Bakgrundstrådar ---
 
 def background_data_fetch(redis_instance):
@@ -572,80 +651,19 @@ def background_data_fetch(redis_instance):
                     ohlc_5min_data = fetch_ohlc_data_from_kraken(ticker, OHLC_CACHE_INTERVAL_MIN, periods_ago_24h) 
                     if ohlc_5min_data:
                          redis_instance.set(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}', json.dumps(ohlc_5min_data), ex=7200)
-
-                    periods_ago_1y = 365 * 86400 * 1.1 
-                    ohlc_1day_data = fetch_ohlc_data_from_kraken(ticker, 1440, periods_ago_1y) 
-                    if ohlc_1day_data:
-                         redis_instance.set(f'OHLC_1DAY_{ticker}', json.dumps(ohlc_1day_data), ex=86400)
                          
-                    # Hämta 15min data som grund för Live-vyn 
-                    # Vi cachear detta som standard, om användaren väljer 30m/1h hämtas det direkt i callback
-                    ohlc_live_view = fetch_ohlc_data_from_kraken(ticker, 15, 3600 * 12)
-                    if ohlc_live_view:
-                        redis_instance.set(f'OHLC_LIVE_VIEW_{ticker}', json.dumps(ohlc_live_view), ex=300)
-                
-                else:
-                    cached_5min = redis_instance.get(f'OHLC_CACHED_{OHLC_CACHE_INTERVAL_MIN}MIN_{ticker}')
-                    ohlc_5min_data = json.loads(cached_5min) if cached_5min else []
-                    
-                    cached_1day = redis_instance.get(f'OHLC_1DAY_{ticker}')
-                    ohlc_1day_data = json.loads(cached_1day) if cached_1day else []
+                         check_rsi_alerts(coin_symbol, current_price_eur, ohlc_5min_data, redis_instance)
 
-                if fetch_extra_intervals:
-                    ohlc_1week_data = fetch_ohlc_data_from_kraken(ticker, 15, 7 * 86400)
-                    if ohlc_1week_data:
-                        redis_instance.set(f'OHLC_1WEEK_{ticker}', json.dumps(ohlc_1week_data), ex=3600)
-                    
-                    ohlc_1month_data = fetch_ohlc_data_from_kraken(ticker, 60, 30 * 86400)
-                    if ohlc_1month_data:
-                        redis_instance.set(f'OHLC_1MONTH_{ticker}', json.dumps(ohlc_1month_data), ex=7200)
 
-                trade_value_int = None
-                if ohlc_5min_data and ohlc_1day_data:
-                    hist_5min_current = ohlc_5min_data.copy()
-                    hist_5min_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
-                    hist_1day_current = ohlc_1day_data.copy()
-                    hist_1day_current.append({'time': new_data.get('timestamp'), 'price': current_price_eur})
-                    
-                    trade_value, _ = calculate_trade_value(hist_5min_current, current_price_eur, hist_1day_current)
-                    if trade_value is not None:
-                        trade_value_int = int(round(trade_value))
-                
-                if ohlc_5min_data:
-                    prices_eur = [item['price'] for item in ohlc_5min_data]
-                    if prices_eur:
-                        current_high = max(max(prices_eur), current_price_eur)
-                        current_low = min(min(prices_eur), current_price_eur)
-                        all_24h_range_ohlc[coin_symbol] = {'high_eur': current_high, 'low_eur': current_low}
-
-                    short_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == OHLC_CACHE_INTERVAL_MIN}
-                    percent_changes = calculate_percentage_changes(ohlc_5min_data, current_price_eur, short_term_periods)
-                else:
-                    percent_changes = {}
-
-                long_term_periods = {k: v for k, v in TIME_WINDOWS.items() if v['interval'] == 1440}
-                long_term_changes = calculate_percentage_changes(ohlc_1day_data, current_price_eur, long_term_periods)
-                
-                percent_changes.update(long_term_changes) 
-                all_percent_changes[coin_symbol] = percent_changes
-                alert_data_for_sending[coin_symbol] = {'changes': percent_changes, 'price_eur': current_price_eur}
-                trade_value_alert_data[coin_symbol] = {'trade_value': trade_value_int, 'price_eur': current_price_eur}
-            
-            if redis_instance:
-                check_and_send_alerts(alert_data_for_sending, redis_instance)
-                check_and_send_trade_value_alerts(trade_value_alert_data, redis_instance) 
-                
-                new_data['ALL_PERCENT_CHANGE'] = all_percent_changes
-                new_data['ALL_24H_RANGE_OHLC'] = all_24h_range_ohlc 
-                
-                redis_instance.set('crypto_data', json.dumps(new_data), ex=UPDATE_INTERVAL_FAST + 60)
-                logger.debug("✅ Snabb uppdatering sparad (10s).")
-            
-            time.sleep(max(0, UPDATE_INTERVAL_FAST - (time.time() - cycle_start_time)))
+        # Här stänger vi try-blocket (backa tillbaka ut mot vänster)
         except Exception as e:
-            logger.error(f"❌ Fel i bakgrundstråd: {e}")
-            time.sleep(30)
+            # Här flyttar vi in ETT steg för att berätta vad som ska göras vid fel
+            logger.error(f"Ett fel uppstod i bakgrundstråden: {e}")
+        
+        # Samma nivå som except
+        time.sleep(60)
 
+# Ny funktion börjar - Helt intryckt mot vänsterkanten!
 def background_summary_sender(redis_instance):
     while True:
         try:
@@ -853,7 +871,7 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
             html.Div([
                 dcc.Checklist(
                     id='theme-switch',
-                    options=[{'label': ' Dark Mode', 'value': 'dark'}],
+                    options={'dark': ' Dark Mode'},
                     value=[],
                     inline=True,
                     inputStyle={"margin-right": "5px"}
@@ -866,11 +884,11 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                 html.H3('⚙️ Kontroller', id='controls-header', style={'fontSize': '1.3em', 'marginBottom': '15px'}),
                 html.Div(style={'marginBottom': '20px'}, children=[
                     html.Label("Välj kryptovaluta:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'display': 'block'}),
-                    dcc.Dropdown(id='coin-dropdown', options=[{'label': label, 'value': label.split(' ')[0]} for label in COINS_LABELS], value=DEFAULT_COIN_SYMBOL, clearable=False),
+                    dcc.Dropdown(id='coin-dropdown', options={label.split(' ')[0]: label for label in COINS_LABELS}, value=DEFAULT_COIN_SYMBOL, clearable=False),
                 ]),
                 html.Div(children=[
                     html.Label("Välj basvaluta/krypto:", style={'marginBottom': '5px', 'fontWeight': 'bold', 'display': 'block'}),
-                    dcc.Dropdown(id='currency-dropdown', options=[{'label': f'{c} ({c})', 'value': c} for c in BASE_CURRENCIES], value='EUR', clearable=False),
+                    dcc.Dropdown(id='currency-dropdown', options={c: f'{c} ({c})' for c in BASE_CURRENCIES}, value='EUR', clearable=False),
                 ]),
             ]),
             html.Div(style={'flex': '1 1 600px', 'minWidth': '600px'}, children=[
@@ -888,7 +906,7 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      html.Label("Visa Trendlinjer:", style={'fontWeight': 'bold', 'marginRight': '15px', 'fontSize': '0.9em'}),
                      dcc.Checklist(
                          id='trendline-checkboxes',
-                         options=[{'label': config['name'].split(' ')[1].replace('(', '').replace(')', ''), 'value': key} for key, config in TREND_WINDOWS.items() if config.get('show_line')],
+                         options={key: config['name'].split(' ')[1].replace('(', '').replace(')', '') for key, config in TREND_WINDOWS.items() if config.get('show_line')},
                          value=[k for k, v in TREND_WINDOWS.items() if v.get('show_line')], 
                          inline=True,
                          style={'display': 'inline-block'}
@@ -898,31 +916,22 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      html.Label("Candle (Live):", style={'fontWeight': 'bold', 'marginRight': '5px', 'fontSize': '0.9em'}),
                      dcc.Dropdown(
                         id='live-candle-interval',
-                        options=[
-                            {'label': '15 min', 'value': 15},
-                            {'label': '30 min', 'value': 30},
-                            {'label': '1 timme', 'value': 60}
-                        ],
-                        value=15,
+                        options={'15': '15 min', '30': '30 min', '60': '1 timme'},
+                        value='15',
                         clearable=False,
                         style={'width': '100px', 'marginRight': '20px'}
                      ),
                      html.Label("Graf Tidsintervall:", style={'fontWeight': 'bold', 'marginRight': '10px', 'fontSize': '0.9em'}),
                      dcc.RadioItems(
                         id='graph-timeframe',
-                        options=[
-                            {'label': ' 4 Timmar (Live)', 'value': '4h_live'},
-                            {'label': ' 1 Dag (5m)', 'value': '1d'},
-                            {'label': ' 1 Vecka (15m)', 'value': '1w'},
-                            {'label': ' 1 Månad (60m)', 'value': '1m'}
-                        ],
+                        options={'4h_live': ' 4 Timmar (Live)', '1d': ' 1 Dag (5m)', '1w': ' 1 Vecka (15m)', '1m': ' 1 Månad (60m)'},
                         value='1d',
                         inline=True,
                         labelStyle={'marginRight': '15px', 'cursor': 'pointer'}
                      )
                 ])
             ]),
-            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
+            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', figure={}, config={'displayModeBar': False})]),
         ]),
         
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
@@ -979,8 +988,8 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
         
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
-            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}), # Textfärg tvingad till svart här
-            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ # Textfärg tvingad till svart här
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}), 
+            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ 
                 html.Div([
                     html.P('**Prisrörelser (%):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0 0 5px 0'}),
                     html.Ul([html.Li(f'+{t}%' if t > 0 else f'{t}%') for t in ALERT_THRESHOLDS_UP[::-1] + ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
@@ -997,6 +1006,9 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
     dcc.Interval(id='interval-fast', interval=UPDATE_INTERVAL_FAST*1000, n_intervals=0),
     dcc.Interval(id='interval-slow', interval=UPDATE_INTERVAL_SLOW*1000, n_intervals=0)
 ])
+
+
+
 
 # --- Callbacks ---
 

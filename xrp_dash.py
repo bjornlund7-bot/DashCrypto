@@ -661,7 +661,6 @@ def background_data_fetch(redis_instance):
             logger.error(f"Ett fel uppstod i bakgrundstråden: {e}")
         
         # Samma nivå som except
-        import time
         time.sleep(60)
 
 # Ny funktion börjar - Helt intryckt mot vänsterkanten!

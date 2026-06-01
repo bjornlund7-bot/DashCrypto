@@ -865,7 +865,6 @@ TABLE_COLUMNS = [
 ]
 
 
-
 app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': '40px 10px', 'fontFamily': 'Roboto, Arial, sans-serif'}, children=[
     html.Div(id='content-container', style={'maxWidth': '1400px', 'margin': '40px auto', 'padding': '30px', 'borderRadius': '12px', 'boxShadow': '0 4px 12px rgba(0,0,0,0.1)', 'border': '1px solid #dee2e6'}, children=[
         html.Div(style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'marginBottom': '30px'}, children=[
@@ -919,11 +918,11 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      dcc.Dropdown(
                         id='live-candle-interval',
                         options=[
-                            {'label': '15 min', 'value': '15'},
-                            {'label': '30 min', 'value': '30'},
-                            {'label': '1 timme', 'value': '60'}
+                            {'label': '15 min', 'value': 15},
+                            {'label': '30 min', 'value': 30},
+                            {'label': '1 timme', 'value': 60}
                         ],
-                        value='15',
+                        value=15,
                         clearable=False,
                         style={'width': '100px', 'marginRight': '20px'}
                      ),
@@ -942,7 +941,7 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
                      )
                 ])
             ]),
-            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', figure={}, config={'displayModeBar': False})]),
+            dcc.Loading(id="loading-1", type="circle", children=[dcc.Graph(id='live-update-graph', config={'displayModeBar': False})]),
         ]),
         
         html.Div(id='crypto-summary-container', style={'marginTop': '30px', 'paddingTop': '20px', 'borderTop': '1px solid #dee2e6', 'marginBottom': '30px'}, children=[
@@ -999,8 +998,8 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
         
         html.Div(style={'marginTop': '40px', 'padding': '20px', 'border': '1px solid #17a2b8', 'borderRadius': '6px', 'backgroundColor': '#e8f7fa'}, children=[
             html.H3('🔔 Automatisk Telegram Alert-status (Aktiv)', style={'fontSize': '1.3em', 'color': '#17a2b8', 'marginBottom': '10px'}),
-            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}),
-            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ 
+            html.P('Aviseringar skickas automatiskt när det högsta/lägsta tröskelvärdet uppnås för Prisrörelser eller *positivt* Handelsvärde:', style={'margin': '0 0 10px 0', 'color': '#000'}), # Textfärg tvingad till svart här
+            html.Div(style={'display': 'flex', 'gap': '50px', 'flexWrap': 'wrap', 'color': '#000'}, children=[ # Textfärg tvingad till svart här
                 html.Div([
                     html.P('**Prisrörelser (%):**', style={'fontWeight': 'bold', 'color': '#28a745', 'margin': '0 0 5px 0'}),
                     html.Ul([html.Li(f'+{t}%' if t > 0 else f'{t}%') for t in ALERT_THRESHOLDS_UP[::-1] + ALERT_THRESHOLDS_DOWN], style={'marginTop': '5px', 'paddingLeft': '20px', 'fontSize': '0.9em'})
@@ -1017,9 +1016,6 @@ app.layout = html.Div(id='main-layout', style={'minHeight': '100vh', 'padding': 
     dcc.Interval(id='interval-fast', interval=UPDATE_INTERVAL_FAST*1000, n_intervals=0),
     dcc.Interval(id='interval-slow', interval=UPDATE_INTERVAL_SLOW*1000, n_intervals=0)
 ])
-
-
-
 
 
 

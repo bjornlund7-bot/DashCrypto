@@ -250,6 +250,47 @@ def calculate_trade_value(short_term_data, current_price_eur, long_term_data=Non
 
     return trade_value if trade_value is not None else None, individual_trends
 
+
+
+def check_rmi_alerts(symbol, rmi_value):
+    """
+    RMI-Larm: Skickar Telegram endast vid inträde i zon 25 eller 75.
+    """
+    if r is None or rmi_value is None: 
+        return # Om Redis saknas eller värdet är ogiltigt avbryter vi
+    
+    alert_key = f"rmi_last_zone_{symbol}"
+    last_zone = r.get(alert_key)
+    last_zone = last_zone.decode('utf-8') if last_zone else "NEUTRAL"
+    
+    current_zone = "NEUTRAL"
+    if rmi_value <= 25:
+        current_zone = "ZON 25 (Låg)"
+    elif rmi_value >= 75:
+        current_zone = "ZON 75 (Hög)"
+
+    # Larm logik: Skicka ENDAST om vi byter från NEUTRAL till en larm-zon
+    if current_zone != "NEUTRAL" and current_zone != last_zone:
+        message = f"🚨 RMI Alert för {symbol}!\nVärde: {rmi_value:.2f}\nZon: {current_zone}"
+        
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message}, timeout=10)
+            r.set(alert_key, current_zone) # Spara i Redis att vi nu är i zonen
+            logger.info(f"RMI-larm skickat för {symbol}: {current_zone}")
+        except Exception as e:
+            logger.error(f"Kunde inte skicka RMI-larm: {e}")
+            
+    # Återställ: Om vi lämnar zonen, nollställ så vi kan få larm igen nästa gång
+    elif current_zone == "NEUTRAL" and last_zone != "NEUTRAL":
+        r.set(alert_key, "NEUTRAL")
+        logger.info(f"RMI återgick till neutral för {symbol}")
+
+
+
+
+
+
 def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
     summary_data = []
     ohlc_interval = OHLC_CACHE_INTERVAL_MIN
@@ -278,6 +319,7 @@ def format_summary_for_telegram(data, eur_to_sek, timezone_offset_hours):
             trade_value, _ = calculate_trade_value(h_5min, price_eur, h_1day)
             if trade_value is not None:
                 trade_value_int = int(round(trade_value))
+
 
         sort_key_3h = percent_data_loop.get('3h') if percent_data_loop.get('3h') is not None else -float('inf')
         sort_key_24h = percent_data_loop.get('24h') if percent_data_loop.get('24h') is not None else -float('inf')
@@ -1166,6 +1208,7 @@ def update_fast_components(n, coin_symbol, currency, timeframe, candle_interval,
     return summary_box, updated_text, chart_data_store, currency
 
 
+
 # CALLBACK 2: TABELLEN (Drivs av interval-slow, 2 minuter)
 @app.callback(
     [Output('crypto-table', 'data'),
@@ -1204,7 +1247,10 @@ def update_table_slow(n, currency, theme_value):
         tv_int = None
         if h5 and pe:
             tv_val, _ = calculate_trade_value(h5 + [{'time': data.get('timestamp'), 'price': pe}], pe, h1 + [{'time': data.get('timestamp'), 'price': pe}])
-            if tv_val is not None: tv_int = int(round(tv_val))
+            if tv_val is not None: 
+                tv_int = int(round(tv_val))
+                # ---> RMI LARM AKTIVERAS HÄR <---
+                check_rmi_alerts(sl, tv_val)
         
         pb = pe
         if currency == 'SEK': pb = pe * eur_to_sek if pe else None
@@ -1255,6 +1301,13 @@ def update_table_slow(n, currency, theme_value):
     }
 
     return table_data, style_header, style_cell
+
+
+
+
+
+
+
 
 @app.callback(
     Output('live-update-graph', 'figure'),
